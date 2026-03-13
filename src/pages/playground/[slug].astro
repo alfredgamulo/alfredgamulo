@@ -1,0 +1,52 @@
+---
+/**
+ * src/pages/playground/[slug].astro
+ *
+ * Dynamic route for interactive pages (pageType === "interactive").
+ * Renders each entry with InteractiveLayout, passing MDX Content for rendering.
+ *
+ * Per F3 resolution: starterCode is a prop on the MDX component call,
+ * NOT a frontmatter field. Frontmatter carries only SEO fields.
+ *
+ * Implements T029.
+ */
+
+import { getCollection, render } from "astro:content";
+import InteractiveLayout from "@layouts/InteractiveLayout.astro";
+
+export async function getStaticPaths() {
+    const entries = await getCollection(
+        "garden",
+        ({ data }) => !data.draft && data.pageType === "interactive",
+    );
+
+    return entries.map((entry) => {
+        // entry.id in Astro 6 Content Layer is like "playground/python-editor" (no extension)
+        const parts = entry.id.split("/");
+        const slug = parts[parts.length - 1];
+        return {
+            params: { slug },
+            props: { entry },
+        };
+    });
+}
+
+const { entry } = Astro.props;
+const { Content } = await render(entry);
+
+const siteUrl = "https://alfredgamulo.com";
+const canonical =
+    entry.data.canonical ?? `${siteUrl}/playground/${Astro.params.slug}`;
+---
+
+<InteractiveLayout
+    title={entry.data.title}
+    description={entry.data.description}
+    canonical={canonical}
+    ogImage={entry.data.ogImage}
+    tags={entry.data.tags}
+    date={entry.data.date}
+    scrollable={entry.data.scrollable}
+>
+    <Content />
+</InteractiveLayout>

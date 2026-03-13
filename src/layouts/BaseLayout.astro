@@ -1,0 +1,105 @@
+---
+/**
+ * src/layouts/BaseLayout.astro
+ *
+ * Full HTML shell. Imports SEOHead and global CSS.
+ * All other layouts extend this layout via composition.
+ */
+
+import SEOHead from "@components/SEOHead.astro";
+import "@styles/global.css";
+
+export interface Props {
+    title: string;
+    description: string;
+    canonical: string;
+    ogImage?: string;
+    jsonLd?: Record<string, unknown>;
+    noindex?: boolean;
+    bodyClass?: string;
+    bodyStyle?: string;
+    mainStyle?: string;
+}
+
+const {
+    title,
+    description,
+    canonical,
+    ogImage,
+    jsonLd,
+    noindex,
+    bodyClass,
+    bodyStyle,
+    mainStyle,
+} = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <SEOHead
+            title={title}
+            description={description}
+            canonical={canonical}
+            ogImage={ogImage}
+            jsonLd={jsonLd}
+            noindex={noindex}
+        />
+    </head>
+    <body class:list={[bodyClass]} style={bodyStyle}>
+        <nav class="nav">
+            <a class="nav-brand" href="/">&gt;_ Alfred Gamulo</a>
+            <ul class="nav-links">
+                <li><a href="/about">About</a></li>
+            </ul>
+        </nav>
+        <main style={mainStyle}>
+            <slot />
+        </main>
+    </body>
+</html>
+
+<style>
+    .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: var(--space-3) var(--space-6);
+        border-bottom: 1px solid var(--color-border);
+        background-color: var(--color-bg);
+        position: sticky;
+        top: 0;
+        z-index: 10;
+    }
+
+    .nav-brand {
+        font-family: var(--font-mono);
+        font-size: var(--text-lg);
+        font-weight: 700;
+        color: var(--color-accent);
+        text-decoration: none;
+    }
+
+    .nav-brand:hover {
+        color: var(--color-link-hover);
+    }
+
+    .nav-links {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        gap: var(--space-4);
+    }
+
+    .nav-links a {
+        color: var(--color-text-muted);
+        text-decoration: none;
+        font-size: var(--text-sm);
+    }
+
+    .nav-links a:hover {
+        color: var(--color-text);
+    }
+</style>

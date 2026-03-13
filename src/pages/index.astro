@@ -1,0 +1,84 @@
+---
+/**
+ * src/pages/index.astro
+ *
+ * Home page: full-viewport animated D3 mind map.
+ * Builds graph at compile time, injects as inline JSON for the D3 island.
+ *
+ * Implements T017 (mind map page) + T018 (empty state via MindMap).
+ */
+
+import { getCollection } from "astro:content";
+import BaseLayout from "@layouts/BaseLayout.astro";
+import MindMap from "@components/MindMap.astro";
+import { buildMindMapGraph } from "@lib/buildGraph";
+
+const entries = await getCollection("garden");
+const graph = buildMindMapGraph(entries);
+const graphJson = JSON.stringify(graph);
+
+const siteUrl = "https://alfredgamulo.com";
+---
+
+<BaseLayout
+	title="Alfred Gamulo"
+	description="Security engineer and builder. Explore my digital garden — CVE writeups, tools, and ideas."
+	canonical={siteUrl}
+>
+	<!-- Inline graph data for D3 island — no fetch request needed -->
+	<script id="garden-graph" type="application/json" set:html={graphJson} />
+
+	<!-- Full-viewport mind map (Astro component — D3 runs in client <script>) -->
+	<MindMap />
+
+	<!-- No-JS fallback (EC-005: accessible without JavaScript) -->
+	<noscript>
+		<div class="noscript-fallback">
+			<h1>Alfred Gamulo — Digital Garden</h1>
+			<p>
+				Security engineer and builder. Enable JavaScript to view the
+				interactive mind map.
+			</p>
+			{
+				graph.nodes.length > 0 ? (
+					<ul>
+						{graph.nodes.map((node) => (
+							<li>
+								<a href={node.url}>{node.label}</a>
+								<span class="noscript-meta">
+									{" "}
+									— {node.primaryTag}
+								</span>
+							</li>
+						))}
+					</ul>
+				) : (
+					<p>No pages yet.</p>
+				)
+			}
+		</div>
+	</noscript>
+</BaseLayout>
+
+<style>
+	/* Override BaseLayout main styles for full-viewport mind map */
+	:global(body) {
+		overflow: hidden;
+	}
+
+	:global(main) {
+		padding: 0;
+		margin: 0;
+	}
+
+	.noscript-fallback {
+		padding: var(--space-8);
+		max-width: 720px;
+		margin: 0 auto;
+	}
+
+	.noscript-meta {
+		color: var(--color-text-muted);
+		font-size: var(--text-sm);
+	}
+</style>

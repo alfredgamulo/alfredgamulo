@@ -1,0 +1,99 @@
+---
+/**
+ * src/components/NodePreviewCard.astro
+ *
+ * Floating preview card shown on mind map node hover.
+ * Position is driven by D3 pointer coordinates via CSS transform.
+ * Hidden by default, shown via a `.visible` class toggled by JavaScript.
+ */
+---
+
+<div
+    id="node-preview-card"
+    class="preview-card"
+    aria-live="polite"
+    role="tooltip"
+>
+    <div class="preview-card__header">
+        <span class="preview-card__type" id="preview-type"></span>
+        <span class="preview-card__date" id="preview-date"></span>
+    </div>
+    <h3 class="preview-card__title" id="preview-title"></h3>
+    <p class="preview-card__description" id="preview-description"></p>
+    <div class="preview-card__tags" id="preview-tags"></div>
+</div>
+
+<style>
+    .preview-card {
+        position: fixed;
+        z-index: 100;
+        width: 280px;
+        padding: var(--space-4);
+        background: var(--color-bg-secondary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        pointer-events: none;
+        opacity: 0;
+        transform: translate(12px, 12px);
+        transition: opacity 0.15s ease;
+    }
+
+    .preview-card.visible {
+        opacity: 1;
+    }
+
+    .preview-card__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--space-2);
+    }
+
+    .preview-card__type {
+        font-size: var(--text-xs);
+        font-family: var(--font-mono);
+        color: var(--color-accent);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .preview-card__date {
+        font-size: var(--text-xs);
+        color: var(--color-text-muted);
+    }
+
+    .preview-card__title {
+        font-size: var(--text-base);
+        font-weight: 600;
+        margin: 0 0 var(--space-2);
+        line-height: var(--leading-tight);
+    }
+
+    .preview-card__description {
+        font-size: var(--text-sm);
+        color: var(--color-text-muted);
+        margin: 0 0 var(--space-3);
+        line-height: var(--leading-relaxed);
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .preview-card__tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-1);
+    }
+
+    .preview-card__tags :global(.tag-chip) {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-size: var(--text-xs);
+        font-weight: 500;
+        color: white;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+</style>

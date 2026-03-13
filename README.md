@@ -19,7 +19,7 @@ When I am not at my desk, I am usually deep in the security community. I believe
 * **CTF Competitor:** I love the thrill of the hunt. I have taken 1st place in both Wireless and Embedded CTFs at **DEF CON**.
 
 ### 🏆 Hall of Fame
-* **DEF CON Black Badge Winner (2024):** Part of the winning team for hacking IoT devices.
+* **DEF CON Black Badge Winner (2024):** Part of the [winning team](https://defcon.org/html/links/dc-black-badge.html#tab-32) for hacking IoT devices.
 * **CTF Documentation:** You can find my research and activity over at [CTFdeets](https://github.com/alfredgamulo/CTFdeets).
 * **Open Source:** I enjoy polishing the tools we all use, whether it is [enhancing PyKCS11](https://github.com/LudovicRousseau/PyKCS11/issues/45) or [refactoring AES implementations](https://github.com/aws-samples/aws-cloudhsm-pkcs11-examples/pull/13/files) for the AWS CloudHSM community.
 

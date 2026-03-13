@@ -1,0 +1,360 @@
+---
+/**
+ * src/layouts/WriteupLayout.astro
+ *
+ * Layout for CVE write-up and security research pages.
+ * Extends BaseLayout with structured CVE sections and JSON-LD Article schema.
+ *
+ * Implements T022.
+ */
+
+import BaseLayout from "@layouts/BaseLayout.astro";
+import CVSSBadge from "@components/CVSSBadge.astro";
+import Timeline from "@components/Timeline.astro";
+import type { CvssSeverity } from "@components/CVSSBadge.astro";
+
+export interface TimelineEntry {
+    date: string;
+    event: string;
+}
+
+export interface Props {
+    // SEO
+    title: string;
+    description: string;
+    canonical: string;
+    ogImage?: string;
+    noindex?: boolean;
+
+    // CVE metadata (optional — present on CVE write-ups)
+    cveId?: string;
+    cvssScore?: number;
+    cvssSeverity?: CvssSeverity;
+    affectedVersions?: string[];
+    vendor?: string;
+    disclosureDate?: Date;
+    patchDate?: Date;
+
+    // Disclosure timeline entries (constructed by the page route)
+    timelineEntries?: TimelineEntry[];
+
+    // Publication date
+    date: Date;
+    tags?: string[];
+}
+
+const {
+    title,
+    description,
+    canonical,
+    ogImage,
+    noindex,
+    cveId,
+    cvssScore,
+    cvssSeverity,
+    affectedVersions,
+    vendor,
+    disclosureDate,
+    patchDate,
+    timelineEntries = [],
+    date,
+    tags = [],
+} = Astro.props;
+
+// Build JSON-LD Article schema
+const jsonLd: Record<string, unknown> = {
+    "@context": "https://schema.org",
+    "@type": "Article",
+    headline: title,
+    description,
+    datePublished: date.toISOString(),
+    author: {
+        "@type": "Person",
+        name: "Alfred Gamulo",
+        url: "https://alfredgamulo.com",
+    },
+    publisher: {
+        "@type": "Person",
+        name: "Alfred Gamulo",
+        url: "https://alfredgamulo.com",
+    },
+    url: canonical,
+    ...(ogImage && { image: ogImage }),
+};
+---
+
+<BaseLayout
+    title={title}
+    description={description}
+    canonical={canonical}
+    ogImage={ogImage}
+    jsonLd={jsonLd}
+    noindex={noindex}
+>
+    <article class="writeup">
+        <!-- Article Header -->
+        <header class="writeup__header">
+            <div class="writeup__meta-row">
+                {cveId && <code class="writeup__cve-id">{cveId}</code>}
+                {
+                    cvssSeverity && cvssScore !== undefined && (
+                        <CVSSBadge score={cvssScore} severity={cvssSeverity} />
+                    )
+                }
+                {
+                    tags.length > 0 && (
+                        <div class="writeup__tags">
+                            {tags.map((tag) => (
+                                <span class="writeup__tag">{tag}</span>
+                            ))}
+                        </div>
+                    )
+                }
+            </div>
+
+            <h1 class="writeup__title">{title}</h1>
+
+            <div class="writeup__byline">
+                <span>Alfred Gamulo</span>
+                <span class="writeup__sep">·</span>
+                <time datetime={date.toISOString()}>
+                    {
+                        date.toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                        })
+                    }
+                </time>
+            </div>
+
+            <p class="writeup__description">{description}</p>
+
+            <!-- Structured CVE metadata table -->
+            {
+                cveId && (
+                    <div class="writeup__infobox" aria-label="CVE metadata">
+                        <dl class="writeup__metadata">
+                            {vendor && (
+                                <>
+                                    <dt>Affected Product</dt>
+                                    <dd>{vendor}</dd>
+                                </>
+                            )}
+                            {affectedVersions &&
+                                affectedVersions.length > 0 && (
+                                    <>
+                                        <dt>Affected Versions</dt>
+                                        <dd>{affectedVersions.join(", ")}</dd>
+                                    </>
+                                )}
+                            {disclosureDate && (
+                                <>
+                                    <dt>Disclosed</dt>
+                                    <dd>
+                                        <time
+                                            datetime={disclosureDate.toISOString()}
+                                        >
+                                            {disclosureDate.toLocaleDateString(
+                                                "en-US",
+                                                {
+                                                    year: "numeric",
+                                                    month: "long",
+                                                    day: "numeric",
+                                                },
+                                            )}
+                                        </time>
+                                    </dd>
+                                </>
+                            )}
+                            {patchDate && (
+                                <>
+                                    <dt>Patched</dt>
+                                    <dd>
+                                        <time
+                                            datetime={patchDate.toISOString()}
+                                        >
+                                            {patchDate.toLocaleDateString(
+                                                "en-US",
+                                                {
+                                                    year: "numeric",
+                                                    month: "long",
+                                                    day: "numeric",
+                                                },
+                                            )}
+                                        </time>
+                                    </dd>
+                                </>
+                            )}
+                        </dl>
+                    </div>
+                )
+            }
+        </header>
+
+        <!-- MDX body: Summary, Reproduction Steps, Impact, Remediation, etc. -->
+        <div class="writeup__body">
+            <slot />
+        </div>
+
+        <!-- Disclosure Timeline (rendered after body to not interrupt narrative flow) -->
+        {
+            timelineEntries.length > 0 && (
+                <section
+                    class="writeup__timeline-section"
+                    aria-labelledby="timeline-heading"
+                >
+                    <h2 id="timeline-heading">Disclosure Timeline</h2>
+                    <Timeline entries={timelineEntries} />
+                </section>
+            )
+        }
+    </article>
+</BaseLayout>
+
+<style>
+    .writeup {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: var(--space-8) var(--space-6);
+    }
+
+    .writeup__header {
+        margin-bottom: var(--space-8);
+        border-bottom: 1px solid var(--color-border);
+        padding-bottom: var(--space-8);
+    }
+
+    .writeup__meta-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: var(--space-3);
+        margin-bottom: var(--space-4);
+    }
+
+    .writeup__cve-id {
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        background: var(--color-bg-tertiary);
+        border: 1px solid var(--color-border);
+        padding: 2px 8px;
+        border-radius: var(--radius-sm);
+        color: var(--color-text-muted);
+    }
+
+    .writeup__tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+    }
+
+    .writeup__tag {
+        font-size: var(--text-xs);
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        background: var(--color-bg-tertiary);
+        border: 1px solid var(--color-border);
+        color: var(--color-text-muted);
+    }
+
+    .writeup__title {
+        font-size: var(--text-3xl);
+        font-weight: 700;
+        line-height: var(--leading-tight);
+        margin: 0 0 var(--space-3);
+    }
+
+    .writeup__byline {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        color: var(--color-text-muted);
+        font-size: var(--text-sm);
+        margin-bottom: var(--space-4);
+    }
+
+    .writeup__sep {
+        color: var(--color-border);
+    }
+
+    .writeup__description {
+        font-size: var(--text-lg);
+        color: var(--color-text-muted);
+        line-height: var(--leading-relaxed);
+        margin: 0 0 var(--space-6);
+    }
+
+    .writeup__infobox {
+        background: var(--color-bg-secondary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md);
+        padding: var(--space-4) var(--space-6);
+    }
+
+    .writeup__metadata {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: var(--space-2) var(--space-4);
+        margin: 0;
+    }
+
+    .writeup__metadata dt {
+        font-size: var(--text-sm);
+        font-weight: 600;
+        color: var(--color-text-muted);
+        white-space: nowrap;
+    }
+
+    .writeup__metadata dd {
+        margin: 0;
+        font-size: var(--text-sm);
+        color: var(--color-text);
+    }
+
+    /* Article body typography */
+    .writeup__body {
+        line-height: var(--leading-relaxed);
+    }
+
+    .writeup__body :global(h2) {
+        font-size: var(--text-2xl);
+        font-weight: 700;
+        margin: var(--space-8) 0 var(--space-4);
+        padding-top: var(--space-4);
+        border-top: 1px solid var(--color-border);
+    }
+
+    .writeup__body :global(h3) {
+        font-size: var(--text-xl);
+        font-weight: 600;
+        margin: var(--space-6) 0 var(--space-3);
+    }
+
+    .writeup__body :global(p) {
+        margin: 0 0 var(--space-4);
+        color: var(--color-text);
+    }
+
+    .writeup__body :global(ul),
+    .writeup__body :global(ol) {
+        margin: 0 0 var(--space-4);
+        padding-left: var(--space-6);
+    }
+
+    .writeup__body :global(li) {
+        margin-bottom: var(--space-2);
+    }
+
+    .writeup__timeline-section {
+        margin-top: var(--space-12);
+        padding-top: var(--space-8);
+        border-top: 1px solid var(--color-border);
+    }
+
+    .writeup__timeline-section h2 {
+        font-size: var(--text-2xl);
+        font-weight: 700;
+        margin: 0 0 var(--space-6);
+    }
+</style>

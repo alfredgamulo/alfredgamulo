@@ -1,0 +1,152 @@
+---
+/**
+ * src/layouts/NoteLayout.astro
+ *
+ * Minimal single-column layout for short-form notes.
+ * Applies tighter line-height typography for dense, link-heavy content.
+ *
+ * Implements T032.
+ */
+
+import BaseLayout from "@layouts/BaseLayout.astro";
+
+export interface Props {
+    title: string;
+    description: string;
+    canonical: string;
+    ogImage?: string;
+    noindex?: boolean;
+    date?: Date;
+    tags?: string[];
+}
+
+const {
+    title,
+    description,
+    canonical,
+    ogImage,
+    noindex,
+    date,
+    tags = [],
+} = Astro.props;
+---
+
+<BaseLayout
+    title={title}
+    description={description}
+    canonical={canonical}
+    ogImage={ogImage}
+    noindex={noindex}
+>
+    <article class="note">
+        <header class="note__header">
+            <h1 class="note__title">{title}</h1>
+            <div class="note__meta">
+                {
+                    date && (
+                        <time datetime={date.toISOString()} class="note__date">
+                            {date.toLocaleDateString("en-US", {
+                                year: "numeric",
+                                month: "short",
+                                day: "numeric",
+                            })}
+                        </time>
+                    )
+                }
+                {
+                    tags.length > 0 && (
+                        <div class="note__tags">
+                            {tags.map((tag) => (
+                                <span class="note__tag">{tag}</span>
+                            ))}
+                        </div>
+                    )
+                }
+            </div>
+        </header>
+        <div class="note__body">
+            <slot />
+        </div>
+    </article>
+</BaseLayout>
+
+<style>
+    .note {
+        max-width: 640px;
+        margin: 0 auto;
+        padding: var(--space-8) var(--space-6);
+    }
+
+    .note__header {
+        margin-bottom: var(--space-6);
+        padding-bottom: var(--space-4);
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .note__title {
+        font-size: var(--text-2xl);
+        font-weight: 700;
+        margin: 0 0 var(--space-3);
+        line-height: var(--leading-tight);
+    }
+
+    .note__meta {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        flex-wrap: wrap;
+    }
+
+    .note__date {
+        font-size: var(--text-sm);
+        color: var(--color-text-muted);
+        font-family: var(--font-mono);
+    }
+
+    .note__tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-2);
+    }
+
+    .note__tag {
+        font-size: var(--text-xs);
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        background: var(--color-bg-secondary);
+        border: 1px solid var(--color-border);
+        color: var(--color-text-muted);
+    }
+
+    /* Tighter line-height for note body */
+    .note__body {
+        font-size: var(--text-base);
+        line-height: 1.55; /* tighter than --leading-relaxed (1.625) */
+    }
+
+    .note__body :global(p) {
+        margin: 0 0 var(--space-3);
+    }
+
+    .note__body :global(h2) {
+        font-size: var(--text-xl);
+        font-weight: 600;
+        margin: var(--space-6) 0 var(--space-3);
+    }
+
+    .note__body :global(h3) {
+        font-size: var(--text-lg);
+        font-weight: 600;
+        margin: var(--space-4) 0 var(--space-2);
+    }
+
+    .note__body :global(ul),
+    .note__body :global(ol) {
+        margin: 0 0 var(--space-3);
+        padding-left: var(--space-6);
+    }
+
+    .note__body :global(li) {
+        margin-bottom: var(--space-1);
+    }
+</style>

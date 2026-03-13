@@ -1,0 +1,53 @@
+---
+/**
+ * src/pages/about.astro
+ *
+ * About page — renders README.md as the canonical personal bio.
+ */
+
+import NoteLayout from "@layouts/NoteLayout.astro";
+import ReadmeContent from "../../README.md";
+---
+
+<NoteLayout
+    title="About — Alfred Gamulo"
+    description="Principal Engineer focused on cloud security, vulnerability research, and open source. DEF CON Black Badge winner."
+    canonical="https://alfredgamulo.com/about"
+>
+    <div class="about-readme">
+        <ReadmeContent />
+    </div>
+</NoteLayout>
+
+<style>
+    .about-readme {
+        /* Shield.io badges and GitHub stat images */
+        :global(img) {
+            max-width: 100%;
+            height: auto;
+            vertical-align: middle;
+        }
+        /* Keep tables readable */
+        :global(table) {
+            border-collapse: collapse;
+            width: 100%;
+            margin-block: var(--space-4);
+        }
+        :global(th),
+        :global(td) {
+            text-align: left;
+            padding: var(--space-2) var(--space-3);
+            border: 1px solid var(--color-border);
+        }
+        :global(th) {
+            background: var(--color-bg-secondary);
+            font-weight: 600;
+        }
+        /* Horizontal rule */
+        :global(hr) {
+            border: none;
+            border-top: 1px solid var(--color-border);
+            margin-block: var(--space-8);
+        }
+    }
+</style>
