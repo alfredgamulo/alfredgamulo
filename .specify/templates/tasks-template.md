@@ -52,6 +52,13 @@ description: "Task list template for feature implementation"
 - [ ] T002 Initialize [language] project with [framework] dependencies
 - [ ] T003 [P] Configure linting and formatting tools
 
+### Mandatory Setup for Site Projects
+
+- [ ] T00A Add `Justfile` with targets: `just build`, `just dev`, `just test`, `just deploy` (required).
+- [ ] T00B Create `docs/authoring.md` with examples for static write-ups, canvas/iframe pages, and CVE-style reports.
+- [ ] T00C Add SEO smoke-checks to CI (meta tags, canonical URLs, structured data).
+- [ ] T00D Define default deployment: static build → S3 upload → CloudFront distribution; provide `just deploy` implementation.
+
 ---
 
 ## Phase 2: Foundational (Blocking Prerequisites)

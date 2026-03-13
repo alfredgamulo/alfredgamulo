@@ -113,3 +113,13 @@
 - **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
 - **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
 - **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+
+## Constitution Alignment (required)
+
+All specifications MUST include a short checklist verifying alignment with the project constitution at `/specify/memory/constitution.md`. At minimum, confirm:
+
+- Security-First: note any new secrets, auth, or data exposure and required reviews.
+- Content Flexibility: the spec MUST indicate whether this feature introduces a new page type or presentation pattern and how authoring will be documented.
+- Cost-Efficiency: if the implementation introduces runtime costs, include an estimated monthly cost and justification (prefer static/S3+CloudFront patterns).
+- SEO: list required meta fields, canonical URL behavior, and any prerendering/SSR needs.
+- Developer Experience: confirm `Justfile` targets used for build/dev/test/deploy and any new commands added.
