@@ -8,6 +8,7 @@ My journey has taken me through some incredible security challenges. Here is a s
 * **Cloud Security:** I've spent years securing AWS environments, from contributing to **Cloud Custodian** to developing cloud-native HSMs at **AWS CloudHSM**.
 * **Vulnerability Management:** At **AWS Inspector**, I built modules to help users hunt down security flaws in EC2 hosts and Lambda containers.
 * **Infrastructure & FinOps:** Most recently at **Take-Two**, I bridged the gap between security and operations by building a custom CMDB solution to oversee cloud-deployed assets.
+* **System Engineering:** I enjoy building and maintaining my own computing environment, [QuantumQat](https://github.com/alfredgamulo/quantumqat), which is my custom-tailored, immutable operating system.
 * **SaaS Delivery:** I enjoy the challenge of account provisioning and product delivery pipelines, especially when they empower users to understand their own compliance.
 
 ### 🚩 The "Hacker" Side
