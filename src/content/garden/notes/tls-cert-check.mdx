@@ -1,0 +1,68 @@
+---
+title: "Quick TLS Certificate Check"
+date: 2026-03-13
+description: "Fast commands for inspecting SSL/TLS certificates from the command line."
+pageType: note
+tags: ["tls", "openssl", "security"]
+---
+
+Quick reference for checking TLS certificates.
+
+## Remote Server Certificate
+
+Check a remote server's certificate:
+
+```bash
+echo | openssl s_client -connect example.com:443 2>/dev/null | openssl x509 -noout -text
+```
+
+Just the dates:
+
+```bash
+echo | openssl s_client -connect example.com:443 2>/dev/null | openssl x509 -noout -dates
+```
+
+## Local Certificate File
+
+View a local certificate:
+
+```bash
+openssl x509 -in cert.pem -text -noout
+```
+
+Check expiration:
+
+```bash
+openssl x509 -in cert.pem -noout -enddate
+```
+
+## Common Info Flags
+
+- `-subject` — Shows the subject DN
+- `-issuer` — Shows the issuer DN
+- `-dates` — Shows validity period (notBefore/notAfter)
+- `-fingerprint` — Shows SHA1 fingerprint
+- `-serial` — Shows serial number
+- `-ext subjectAltName` — Shows SAN entries
+
+## Certificate Chain
+
+View full chain from remote:
+
+```bash
+openssl s_client -showcerts -connect example.com:443 </dev/null
+```
+
+## Test Protocol Support
+
+Check if TLS 1.3 is supported:
+
+```bash
+openssl s_client -connect example.com:443 -tls1_3
+```
+
+Check for TLS 1.2:
+
+```bash
+openssl s_client -connect example.com:443 -tls1_2
+```
