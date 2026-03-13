@@ -73,6 +73,9 @@ src/
 │       │   └── cve-2024-example.mdx      # Sample CVE write-up (fictional)
 │       └── playground/
 │           └── python-editor.mdx         # Python editor page
+├── lib/
+│   ├── tagColors.ts                      # TAG_PALETTE array + getTagColor() deterministic hash utility
+│   └── buildGraph.ts                     # buildMindMapGraph() — build-time graph construction
 ├── layouts/
 │   ├── BaseLayout.astro                  # HTML shell: SEOHead + global CSS + nav
 │   ├── WriteupLayout.astro               # CVE/essay layout: structured sections, JSON-LD

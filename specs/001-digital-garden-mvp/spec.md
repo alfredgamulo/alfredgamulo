@@ -21,7 +21,7 @@ A first-time visitor lands on the site and sees an animated mind map rendered on
 
 **Acceptance Scenarios**:
 
-1. **Given** a visitor opens the site root, **When** the page loads, **Then** an animated mind map renders within 3 seconds on a standard broadband connection showing all published pages as labelled nodes connected by shared tags.
+1. **Given** a visitor opens the site root, **When** the page loads, **Then** an animated mind map renders within 3 seconds on a 10 Mbps connection showing all published pages as labelled nodes connected by shared tags.
 2. **Given** the mind map is rendered, **When** the visitor hovers (or long-presses on mobile) a node, **Then** a preview card appears showing: page title, publication date, and associated tags.
 3. **Given** the mind map is rendered, **When** the visitor clicks or taps a node, **Then** they are navigated to the corresponding page URL.
 4. **Given** the site is opened on a mobile device, **When** the visitor pinches or drags the canvas, **Then** the mind map pans and zooms fluidly.
@@ -86,7 +86,7 @@ A visitor opens the Python playground page and sees a two-panel layout: a code e
 - **FR-006**: CVE write-up pages MUST include `title`, `description`, `canonical`, Open Graph (`og:title`, `og:description`, `og:url`), and `twitter:card` meta tags.
 - **FR-007**: CVE write-up pages MUST include JSON-LD structured data (Article schema) covering headline, datePublished, and author.
 - **FR-008**: Code blocks in write-up pages MUST render with syntax highlighting and support horizontal scroll for long lines.
-- **FR-009**: The Python editor page MUST execute submitted code entirely client-side using Pyodide or PyScript — no backend server required.
+- **FR-009**: The Python editor page MUST execute submitted code entirely client-side using Pyodide — no backend server required.
 - **FR-010**: The Python editor MUST display a loading indicator while the runtime initialises and hide it when ready.
 - **FR-011**: The Python editor MUST capture stdout and stderr and display them in the output panel after code execution.
 - **FR-012**: The Python editor MUST provide a Reset button that restores starter code and clears the output panel.
@@ -116,7 +116,7 @@ A visitor opens the Python playground page and sees a two-panel layout: a code e
 
 - Static site generator selection (Astro is the recommended candidate for its island architecture and MDX support; Hugo is an alternative) is a planning-phase decision. This spec is technology-agnostic.
 - Mind map animation library (D3.js force simulation, vis-network, or custom canvas with spring physics) is a planning-phase decision.
-- Pyodide is the default Python runtime; PyScript is acceptable if it delivers better UX. Both are client-only.
+- Pyodide 0.27 is the selected Python runtime (decided in Phase 0 research — see plan.md). Client-side only; no backend required.
 - Dark mode is implemented via CSS `prefers-color-scheme` only — no user toggle is required for MVP.
 - MVP ships exactly one CVE sample page and one Python editor page; additional content is out of scope.
 - CVSS score is displayed as a static badge (label + numeric value). No interactive CVSS calculator is required for MVP.
