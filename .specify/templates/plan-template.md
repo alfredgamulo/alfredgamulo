@@ -31,7 +31,7 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+Gates are derived from /specify/memory/constitution.md and MUST verify the following project-level requirements: Security-First controls, Test-First coverage, Observability requirements, Simplicity/minimal surface constraints, and Versioning & Change Management rules.
 
 ## Project Structure
 
