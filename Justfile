@@ -42,7 +42,6 @@ infra:
 infra-destroy:
     #!/usr/bin/env bash
     set -euo pipefail
-    SITE_BUCKET=""
     if [ -f .env.deploy ]; then
       # shellcheck source=/dev/null
       source .env.deploy
