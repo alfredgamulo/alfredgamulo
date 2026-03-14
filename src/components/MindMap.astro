@@ -55,7 +55,7 @@
         description: string;
         tags: string[];
         primaryTag: string;
-        pageType: "writeup" | "interactive" | "note";
+        pageType: "writeup" | "interactive" | "note" | "tag";
         // D3 simulation augments at runtime:
         x?: number;
         y?: number;
@@ -167,20 +167,28 @@
                 d3
                     .forceLink<MindMapNode, MindMapLink>(links)
                     .id((d) => d.id)
-                    .strength((d) => Math.min(0.3 + d.strength * 0.05, 0.6)),
+                    .distance(90)
+                    .strength(0.4),
             )
-            .force("charge", d3.forceManyBody<MindMapNode>().strength(-500))
+            .force("charge", d3.forceManyBody<MindMapNode>().strength(-900))
             .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("x", d3.forceX<MindMapNode>(width / 2).strength(0.06))
+            .force("y", d3.forceY<MindMapNode>(height / 2).strength(0.06))
             .force(
                 "collide",
                 d3
                     .forceCollide<MindMapNode>()
                     .radius((d) => {
+                        // Tag hub nodes are rendered at 2× base radius
+                        if (d.pageType === "tag")
+                            return NODE_BASE_RADIUS * 2 + 24;
                         // EC-002/EC-006: scale collision radius when link count > 15
-                        const base = NODE_BASE_RADIUS + 20;
+                        // Add extra padding to account for text label width
+                        const labelLen = (d.label?.length ?? 0) * 3.5;
+                        const base = NODE_BASE_RADIUS + Math.max(30, labelLen);
                         return (d.linkCount ?? 0) > 15 ? base * 1.5 : base;
                     })
-                    .strength(0.8),
+                    .strength(1),
             );
 
         // Render links
@@ -227,12 +235,68 @@
             );
 
         // Draw shape by pageType
+        const RECENCY_DAYS = 90;
+        const now = Date.now();
+
+        /** Convert a hex color to a vivid HSL string for glow use (full saturation, high lightness). */
+        function toGlowColor(hex: string): string {
+            const n = parseInt(hex.slice(1), 16);
+            const r = (n >> 16) / 255;
+            const g = ((n >> 8) & 0xff) / 255;
+            const b = (n & 0xff) / 255;
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const d = max - min;
+            let h = 0;
+            if (d !== 0) {
+                if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+                else if (max === g) h = ((b - r) / d + 2) / 6;
+                else h = ((r - g) / d + 4) / 6;
+            }
+            // Boost: full saturation, lightness pushed to ~70% for vivid glow
+            return `hsl(${Math.round(h * 360)},100%,68%)`;
+        }
+
         nodeGroups.each(function (d) {
             const group = d3.select(this);
             const color = getTagColor(d.primaryTag);
             const r = NODE_BASE_RADIUS;
 
-            if (d.pageType === "writeup") {
+            // Recency glow: linearly fades from max to 0 over RECENCY_DAYS
+            const ageMs = now - new Date(d.date).getTime();
+            const ageDays = ageMs / 86_400_000;
+            const recency = Math.max(0, 1 - ageDays / RECENCY_DAYS); // 1 = brand new, 0 = old
+            const glowRadius = Math.round(recency * 20); // up to 20px blur
+            const glowColor = toGlowColor(color);
+            const glowFilter =
+                recency > 0 && d.pageType !== "tag"
+                    ? `drop-shadow(0 0 ${glowRadius}px ${glowColor}) drop-shadow(0 0 ${Math.round(glowRadius * 0.5)}px ${glowColor}) drop-shadow(0 0 ${Math.round(glowRadius * 0.2)}px #fff)`
+                    : "none";
+
+            if (d.pageType === "tag") {
+                // Tag hub: larger circle with a pill-style look
+                const tr = r * 2;
+                group
+                    .append("circle")
+                    .attr("r", tr)
+                    .attr("fill", color)
+                    .attr("fill-opacity", 0.18)
+                    .attr("stroke", color)
+                    .attr("stroke-width", 2.5)
+                    .attr("stroke-dasharray", "4 2");
+                group
+                    .append("text")
+                    .attr("text-anchor", "middle")
+                    .attr("dominant-baseline", "middle")
+                    .attr("y", 0)
+                    .attr("fill", color)
+                    .attr("font-size", "12")
+                    .attr("font-weight", "700")
+                    .attr("font-family", "var(--font-sans)")
+                    .attr("pointer-events", "none")
+                    .text(d.label);
+                return; // skip the generic label below
+            } else if (d.pageType === "writeup") {
                 // Circle
                 group
                     .append("circle")
@@ -240,7 +304,8 @@
                     .attr("fill", color)
                     .attr("fill-opacity", 0.85)
                     .attr("stroke", color)
-                    .attr("stroke-width", 2);
+                    .attr("stroke-width", 2)
+                    .style("filter", glowFilter);
             } else if (d.pageType === "interactive") {
                 // Diamond (rotated square)
                 const s = r * 1.2;
@@ -250,7 +315,8 @@
                     .attr("fill", color)
                     .attr("fill-opacity", 0.85)
                     .attr("stroke", color)
-                    .attr("stroke-width", 2);
+                    .attr("stroke-width", 2)
+                    .style("filter", glowFilter);
             } else {
                 // Hexagon (note)
                 const hex = hexPath(r);
@@ -260,7 +326,8 @@
                     .attr("fill", color)
                     .attr("fill-opacity", 0.85)
                     .attr("stroke", color)
-                    .attr("stroke-width", 2);
+                    .attr("stroke-width", 2)
+                    .style("filter", glowFilter);
             }
 
             // Label below the shape
@@ -296,15 +363,18 @@
                 card.classList.remove("visible");
             })
             .on("click", (_event: MouseEvent, d: MindMapNode) => {
-                window.location.href = d.url;
+                if (d.url) window.location.href = d.url;
             })
             .on("keydown", (event: KeyboardEvent, d: MindMapNode) => {
-                if (event.key === "Enter" || event.key === " ") {
+                if ((event.key === "Enter" || event.key === " ") && d.url) {
                     window.location.href = d.url;
                 }
             });
 
         function showPreview(event: MouseEvent, d: MindMapNode) {
+            // Tag hub nodes are self-labelled; skip the preview card
+            if (d.pageType === "tag") return;
+
             previewTitle.textContent = d.label;
             previewDesc.textContent = d.description;
             previewType.textContent = d.pageType;
@@ -314,6 +384,7 @@
                     year: "numeric",
                     month: "short",
                     day: "numeric",
+                    timeZone: "UTC",
                 },
             );
 

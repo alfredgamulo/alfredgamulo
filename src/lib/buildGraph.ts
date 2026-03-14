@@ -20,7 +20,7 @@ export interface MindMapNode {
   description: string;
   tags: string[];
   primaryTag: string;
-  pageType: "writeup" | "interactive" | "note";
+  pageType: "writeup" | "interactive" | "note" | "tag";
 }
 
 export interface MindMapLink {
@@ -101,30 +101,40 @@ export function buildMindMapGraph(
 
   // Build links between nodes that share at least one tag
   const links: MindMapLink[] = [];
-  for (let i = 0; i < nodes.length; i++) {
-    for (let j = i + 1; j < nodes.length; j++) {
-      const nodeA = nodes[i];
-      const nodeB = nodes[j];
-      const setB = new Set(nodeB.tags);
-      const sharedTags = nodeA.tags.filter((t) => setB.has(t));
-      if (sharedTags.length > 0) {
-        links.push({
-          source: nodeA.id,
-          target: nodeB.id,
-          sharedTags,
-          strength: sharedTags.length,
-        });
-      }
-    }
-  }
 
-  // Build tag metadata
+  // Collect all unique tags across published content
   const tagMap = new Map<string, number>();
   for (const node of nodes) {
     for (const tag of node.tags) {
       tagMap.set(tag, (tagMap.get(tag) ?? 0) + 1);
     }
   }
+
+  // Create a hub node for each tag
+  const tagNodes: MindMapNode[] = Array.from(tagMap.keys()).map((name) => ({
+    id: `tag-${slugify(name)}`,
+    label: name,
+    url: "",
+    date: new Date(0).toISOString(),
+    description: `Tag: ${name}`,
+    tags: [name],
+    primaryTag: name,
+    pageType: "tag" as const,
+  }));
+
+  // Links: tag hub → each content post that carries that tag
+  for (const node of nodes) {
+    for (const tag of node.tags) {
+      links.push({
+        source: `tag-${slugify(tag)}`,
+        target: node.id,
+        sharedTags: [tag],
+        strength: 1,
+      });
+    }
+  }
+
+  const allNodes: MindMapNode[] = [...tagNodes, ...nodes];
 
   const tags: TagMeta[] = Array.from(tagMap.entries()).map(([name, pageCount]) => ({
     name,
@@ -133,5 +143,5 @@ export function buildMindMapGraph(
     pageCount,
   }));
 
-  return { nodes, links, tags };
+  return { nodes: allNodes, links, tags };
 }
