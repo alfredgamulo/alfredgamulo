@@ -1,0 +1,44 @@
+---
+title: "Python Playground"
+date: 2025-03-13
+description: "An in-browser Python editor powered by Pyodide. No backend, no installation — run Python directly in your browser."
+pageType: interactive
+tags: ["python", "tools"]
+---
+
+import PythonEditor from "@components/PythonEditor.astro";
+
+A full Python environment running directly in your browser via [Pyodide](https://pyodide.org/).
+No server-side execution — all code runs locally in a WebAssembly sandbox.
+
+**Try it out:** Edit the starter code below and click **Run**.
+
+<PythonEditor starterCode={`import hashlib
+
+def caesar_cipher(text: str, shift: int) -> str:
+    """Encrypt text using a Caesar cipher."""
+    result = []
+    for char in text:
+        if char.isalpha():
+            base = ord('a') if char.islower() else ord('A')
+            result.append(chr((ord(char) - base + shift) % 26 + base))
+        else:
+            result.append(char)
+    return ''.join(result)
+
+# Demo: encrypt and decrypt a message
+message = "Hello, Security Engineer!"
+shift = 13  # ROT-13
+
+encrypted = caesar_cipher(message, shift)
+decrypted = caesar_cipher(encrypted, -shift)
+
+print(f"Original:  {message}")
+print(f"Encrypted: {encrypted}")
+print(f"Decrypted: {decrypted}")
+print()
+
+# Hash the original message for integrity verification
+digest = hashlib.sha256(message.encode()).hexdigest()
+print(f"SHA-256 fingerprint: {digest[:16]}...")
+`} />

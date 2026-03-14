@@ -1,0 +1,667 @@
+---
+/**
+ * src/components/BeerCalculator.astro
+ *
+ * Homebrewing recipe calculator.
+ * Preserves the exact calculations from alfredgamulo.com/beer-tools.html:
+ *   OG      = 1 + Σ(PPG × lbs × efficiency) / volume / 1000
+ *   Water   = 1.25 qt/lb × total_lbs
+ *   Strike  = (0.2/1.25) × (target − grain) + target    (Palmers formula)
+ *   SRM     = 1.4922 × MCU^0.6859  (Morey equation)
+ *             where MCU = Σ(lbs × Lovibond) / volume
+ */
+---
+
+<div class="bc">
+    <!-- ── Malt Bill ─────────────────────────────────────────────────── -->
+    <section class="bc-section bc-section--malts">
+        <header class="bc-section__header">
+            <h2 class="bc-section__title">Malt Bill</h2>
+            <p class="bc-section__sub">Enter pounds of each grain</p>
+        </header>
+
+        <!-- Column headers — shared across all groups -->
+        <div class="bc-malt-col-headers" aria-hidden="true">
+            <span>Grain</span>
+            <span>Max PPG</span>
+            <span>Pounds</span>
+        </div>
+
+        <div class="bc-malt-groups">
+            <div class="bc-malt-group">
+                <h3 class="bc-malt-group__label">Base Malts</h3>
+                <div class="bc-malt-rows" id="group-base"></div>
+            </div>
+            <div class="bc-malt-group">
+                <h3 class="bc-malt-group__label">Crystal &amp; Caramel</h3>
+                <div class="bc-malt-rows" id="group-crystal"></div>
+            </div>
+            <div class="bc-malt-group">
+                <h3 class="bc-malt-group__label">Roasted &amp; Dark</h3>
+                <div class="bc-malt-rows" id="group-roasted"></div>
+            </div>
+            <div class="bc-malt-group">
+                <h3 class="bc-malt-group__label">Adjuncts &amp; Other</h3>
+                <div class="bc-malt-rows" id="group-adjuncts"></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── System + Results ──────────────────────────────────────────── -->
+    <aside class="bc-sidebar">
+        <header class="bc-section__header">
+            <h2 class="bc-section__title">Calculator Settings</h2>
+            <p class="bc-section__sub">Configure your brewing system</p>
+        </header>
+        <!-- System -->
+        <section class="bc-card">
+            <h2 class="bc-card__title">System</h2>
+            <label class="bc-field">
+                <span class="bc-field__label">Batch volume <em>(gal)</em></span>
+                <input
+                    class="bc-input"
+                    id="bc-vol"
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    placeholder="5.5"
+                />
+            </label>
+            <label class="bc-field">
+                <span class="bc-field__label">Brewhouse efficiency</span>
+                <input
+                    class="bc-input"
+                    id="bc-eff"
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    placeholder="0.80"
+                />
+            </label>
+        </section>
+
+        <!-- Temperature -->
+        <section class="bc-card">
+            <h2 class="bc-card__title">Temperature</h2>
+            <label class="bc-field">
+                <span class="bc-field__label"
+                    >Target mash temp <em>(°F)</em></span
+                >
+                <input
+                    class="bc-input"
+                    id="bc-ttemp"
+                    type="number"
+                    placeholder="152"
+                />
+            </label>
+            <label class="bc-field">
+                <span class="bc-field__label">Grain temp <em>(°F)</em></span>
+                <input
+                    class="bc-input"
+                    id="bc-gtemp"
+                    type="number"
+                    placeholder="65"
+                />
+            </label>
+        </section>
+
+        <!-- Results -->
+        <section class="bc-card bc-card--results">
+            <h2 class="bc-card__title">Results</h2>
+            <div class="bc-results">
+                <div class="bc-result-item">
+                    <span class="bc-result-item__label">Original Gravity</span>
+                    <output class="bc-result-item__value" id="res-og">—</output>
+                </div>
+                <div class="bc-result-item">
+                    <span class="bc-result-item__label">Water for mash</span>
+                    <output class="bc-result-item__value" id="res-water"
+                        >—</output
+                    >
+                </div>
+                <div class="bc-result-item">
+                    <span class="bc-result-item__label">Strike temperature</span
+                    >
+                    <output class="bc-result-item__value" id="res-strike"
+                        >—</output
+                    >
+                </div>
+                <div class="bc-result-item bc-result-item--color">
+                    <span class="bc-result-item__label">Color (SRM)</span>
+                    <output class="bc-result-item__value" id="res-srm">—</output
+                    >
+                    <span
+                        class="bc-color-swatch"
+                        id="srm-swatch"
+                        aria-hidden="true"></span>
+                </div>
+            </div>
+            <button class="bc-reset-btn" id="bc-reset" type="button"
+                >Clear all</button
+            >
+        </section>
+
+        <p class="bc-footnote">
+            PPG values from
+            <a
+                href="http://www.howtobrew.com/section2/chapter12-4-1.html"
+                target="_blank"
+                rel="noopener noreferrer">How to Brew §12-4-1</a
+            >. SRM via Morey equation.
+        </p>
+    </aside>
+</div>
+
+<script>
+    // ── Malt data: [name, PPG, Lovibond, group]
+    const MALTS = [
+        // Base
+        ["2 Row Lager Malt", 37, 2, "base"],
+        ["6 Row Base Malt", 35, 2, "base"],
+        ["2 Row Pale Ale Malt", 38, 3, "base"],
+        ["Biscuit / Victory Malt", 35, 28, "base"],
+        ["Vienna Malt", 35, 4, "base"],
+        ["Munich Malt", 35, 10, "base"],
+        ["Wheat Malt", 37, 2, "base"],
+        ["Rye Malt", 29, 4, "base"],
+        // Crystal / Caramel
+        ["Light Crystal (10–15°L)", 35, 10, "crystal"],
+        ["Pale Crystal (25–40°L)", 34, 30, "crystal"],
+        ["Medium Crystal (60–75°L)", 34, 65, "crystal"],
+        ["Dark Crystal (120°L)", 33, 120, "crystal"],
+        ["Special B", 31, 180, "crystal"],
+        ["Dextrin Malt", 32, 2, "crystal"],
+        // Roasted / Dark
+        ["Brown Malt", 32, 65, "roasted"],
+        ["Chocolate Malt", 28, 350, "roasted"],
+        ["Roast Barley", 25, 300, "roasted"],
+        ["Black Patent Malt", 25, 500, "roasted"],
+        // Adjuncts / Other
+        ["Oatmeal (Flaked)", 32, 2, "adjuncts"],
+        ["Corn (Flaked)", 39, 1, "adjuncts"],
+        ["Barley (Flaked)", 32, 2, "adjuncts"],
+        ["Wheat (Flaked)", 36, 2, "adjuncts"],
+        ["Rice (Flaked)", 38, 1, "adjuncts"],
+        ["Malto-Dextrin Powder", 40, 0, "adjuncts"],
+        ["Sugar (Corn / Cane)", 46, 0, "adjuncts"],
+    ];
+
+    // SRM colour lookup (Daniels approximate)
+    const SRM_HEX = [
+        "#FFE699",
+        "#FFD878",
+        "#FFCA5A",
+        "#FFBF42",
+        "#FBB123",
+        "#F8A600",
+        "#F39C00",
+        "#EA8F00",
+        "#E58500",
+        "#DE7C00",
+        "#D77200",
+        "#CF6900",
+        "#CB6200",
+        "#C35900",
+        "#BB5100",
+        "#B54C00",
+        "#B04500",
+        "#A63E00",
+        "#A13700",
+        "#9B3200",
+        "#952D00",
+        "#8E2900",
+        "#882300",
+        "#821E00",
+        "#7B1A00",
+        "#771900",
+        "#701400",
+        "#6A0E00",
+        "#640B00",
+        "#5E0800",
+        "#5A0708",
+        "#560707",
+        "#520707",
+        "#4C0505",
+        "#470606",
+        "#440607",
+        "#3F0708",
+        "#3B0607",
+        "#3A0708",
+        "#36080A",
+    ];
+
+    function srmColor(srm) {
+        const idx = Math.min(
+            Math.max(Math.round(srm) - 1, 0),
+            SRM_HEX.length - 1,
+        );
+        return SRM_HEX[idx];
+    }
+
+    // ── Build the malt rows into their group containers
+    const inputs = {}; // id → HTMLInputElement
+
+    MALTS.forEach(([name, ppg, lov, group]) => {
+        const id = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+        const container = document.getElementById("group-" + group);
+        if (!container) return;
+
+        const row = document.createElement("div");
+        row.className = "bc-malt-row";
+        row.innerHTML = `
+    <span class="bc-malt-row__name">${name}</span>
+    <span class="bc-malt-row__ppg" title="Max PPG">${ppg}</span>
+    <input
+      class="bc-input bc-input--sm"
+      id="${id}"
+      type="number"
+      min="0"
+      step="0.125"
+      placeholder="lbs"
+      aria-label="${name} — pounds"
+    />
+  `;
+        container.appendChild(row);
+        inputs[id] = { el: row.querySelector("input"), ppg, lov };
+    });
+
+    // ── Calculation
+    function calculate() {
+        const volEl = document.getElementById("bc-vol");
+        const effEl = document.getElementById("bc-eff");
+        const ttEl = document.getElementById("bc-ttemp");
+        const gtEl = document.getElementById("bc-gtemp");
+
+        const vol = volEl.value !== "" ? parseFloat(volEl.value) : 5.5;
+        const eff = effEl.value !== "" ? parseFloat(effEl.value) : 0.8;
+
+        let gravityPts = 0; // Σ PPG × lbs × eff / vol
+        let mcu = 0; // Σ lbs × Lovibond / vol
+        let totalLbs = 0;
+
+        for (const { el, ppg, lov } of Object.values(inputs)) {
+            if (el.value === "") continue;
+            const lbs = parseFloat(el.value);
+            if (isNaN(lbs) || lbs <= 0) continue;
+            gravityPts += (ppg * lbs * eff) / vol;
+            mcu += (lbs * lov) / vol;
+            totalLbs += lbs;
+        }
+
+        // OG
+        const og = 1 + gravityPts / 1000;
+        document.getElementById("res-og").textContent =
+            totalLbs > 0 ? og.toFixed(3) : "—";
+
+        // Water for mash (quarts, 1.25 qt/lb)
+        const water = 1.25 * totalLbs;
+        document.getElementById("res-water").textContent =
+            totalLbs > 0 ? water.toFixed(2) + " qt" : "—";
+
+        // Strike temperature (Palmer's formula)
+        const ttVal = ttEl.value;
+        const gtVal = gtEl.value;
+        const strikeEl = document.getElementById("res-strike");
+        if (ttVal !== "" && gtVal !== "") {
+            const tt = parseFloat(ttVal);
+            const gt = parseFloat(gtVal);
+            const strike = (0.2 / 1.25) * (tt - gt) + tt;
+            strikeEl.textContent = strike.toFixed(1) + " °F";
+        } else {
+            strikeEl.textContent = "—";
+        }
+
+        // Color — Morey equation
+        const srmEl = document.getElementById("res-srm");
+        const swatchEl = document.getElementById("srm-swatch");
+        if (mcu > 0) {
+            const srm = 1.4922 * Math.pow(mcu, 0.6859);
+            srmEl.textContent = srm.toFixed(1) + " SRM";
+            const hex = srmColor(srm);
+            swatchEl.style.backgroundColor = hex;
+            swatchEl.title = `~${hex}`;
+            swatchEl.style.display = "inline-block";
+        } else {
+            srmEl.textContent = "—";
+            swatchEl.style.display = "none";
+        }
+    }
+
+    // ── Wire up inputs
+    document.getElementById("bc-vol").addEventListener("input", calculate);
+    document.getElementById("bc-eff").addEventListener("input", calculate);
+    document.getElementById("bc-ttemp").addEventListener("input", calculate);
+    document.getElementById("bc-gtemp").addEventListener("input", calculate);
+
+    for (const { el } of Object.values(inputs)) {
+        el.addEventListener("input", calculate);
+    }
+
+    // ── Reset
+    document.getElementById("bc-reset").addEventListener("click", () => {
+        document.getElementById("bc-vol").value = "";
+        document.getElementById("bc-eff").value = "";
+        document.getElementById("bc-ttemp").value = "";
+        document.getElementById("bc-gtemp").value = "";
+        for (const { el } of Object.values(inputs)) {
+            el.value = "";
+        }
+        document.getElementById("res-og").textContent = "—";
+        document.getElementById("res-water").textContent = "—";
+        document.getElementById("res-strike").textContent = "—";
+        document.getElementById("res-srm").textContent = "—";
+        document.getElementById("srm-swatch").style.display = "none";
+    });
+</script>
+
+<style>
+    /* ── Layout ──────────────────────────────────────────────────────────── */
+    .bc {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: var(--space-6);
+        padding: var(--space-6);
+        align-items: start;
+        max-width: 1100px;
+        margin: 0 auto;
+    }
+
+    @media (max-width: 860px) {
+        .bc {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    /* ── Section headers ─────────────────────────────────────────────────── */
+    .bc-section__title {
+        font-size: var(--text-lg);
+        font-weight: 700;
+        margin: 0 0 var(--space-1);
+        color: var(--color-text);
+    }
+
+    .bc-section__sub {
+        font-size: var(--text-sm);
+        color: var(--color-text-muted);
+        margin: 0 0 var(--space-5);
+    }
+
+    /* ── Malt groups ─────────────────────────────────────────────────────── */
+    .bc-malt-groups {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-6);
+    }
+
+    .bc-malt-group__label {
+        font-size: var(--text-xs);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--color-accent);
+        margin: var(--space-4) 0 0;
+        padding: var(--space-2) var(--space-3);
+        background: color-mix(in srgb, var(--color-accent) 8%, transparent);
+        border: 1px solid var(--color-border);
+        border-bottom: none;
+    }
+
+    .bc-malt-group:first-child .bc-malt-group__label {
+        margin-top: 0;
+        border-top: none;
+    }
+
+    /* ── Column header ───────────────────────────────────────────────────── */
+    .bc-malt-col-headers {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 64px 96px;
+        gap: var(--space-3);
+        padding: var(--space-2) var(--space-3);
+        background: var(--color-bg-secondary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md, 6px) var(--radius-md, 6px) 0 0;
+        margin-bottom: -1px;
+    }
+
+    .bc-malt-col-headers span {
+        font-size: var(--text-xs);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--color-text-muted);
+    }
+
+    .bc-malt-col-headers span:nth-child(2) {
+        text-align: center;
+    }
+
+    .bc-malt-col-headers span:nth-child(3) {
+        text-align: right;
+    }
+
+    /* ── Malt rows (created dynamically via JS — must use :global) ───────── */
+    :global(.bc-malt-row) {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 64px 96px;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-2) var(--space-3);
+        border-bottom: 1px solid var(--color-border);
+        border-left: 1px solid var(--color-border);
+        border-right: 1px solid var(--color-border);
+    }
+
+    :global(.bc-malt-row:nth-child(even)) {
+        background: var(--color-bg-secondary);
+    }
+
+    :global(.bc-malt-row:nth-child(odd)) {
+        background: var(--color-bg);
+    }
+
+    /* Round off the last row of the last group */
+    :global(.bc-malt-group:last-child .bc-malt-rows .bc-malt-row:last-child) {
+        border-radius: 0 0 var(--radius-md, 6px) var(--radius-md, 6px);
+    }
+
+    :global(.bc-malt-row__name) {
+        font-size: var(--text-sm);
+        color: var(--color-text);
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    :global(.bc-malt-row__ppg) {
+        font-size: var(--text-xs);
+        color: var(--color-text-muted);
+        font-family: var(--font-mono);
+        text-align: center;
+    }
+
+    :global(.bc-input--sm) {
+        padding: 4px 8px;
+        font-size: var(--text-xs);
+        text-align: right;
+        width: 100%;
+    }
+
+    /* bc-input styles for dynamically-created malt row inputs */
+    :global(.bc-malt-row .bc-input) {
+        width: 100%;
+        padding: 4px 8px;
+        font-size: var(--text-xs);
+        text-align: right;
+        background: var(--color-bg);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-sm, 4px);
+        color: var(--color-text);
+        font-family: var(--font-mono);
+    }
+
+    :global(.bc-malt-row .bc-input:focus) {
+        outline: none;
+        border-color: var(--color-accent);
+        box-shadow: 0 0 0 2px
+            color-mix(in srgb, var(--color-accent) 20%, transparent);
+    }
+
+    /* ── Cards (sidebar) ─────────────────────────────────────────────────── */
+    .bc-sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-4);
+        position: sticky;
+        top: calc(var(--nav-height, 56px) + var(--space-4));
+    }
+
+    .bc-card {
+        background: var(--color-bg-secondary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg, 8px);
+        padding: var(--space-4);
+    }
+
+    .bc-card__title {
+        font-size: var(--text-sm);
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--color-text-muted);
+        margin: 0 0 var(--space-3);
+    }
+
+    /* ── Fields ──────────────────────────────────────────────────────────── */
+    .bc-field {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-1);
+        margin-bottom: var(--space-3);
+    }
+
+    .bc-field:last-child {
+        margin-bottom: 0;
+    }
+
+    .bc-field__label {
+        font-size: var(--text-sm);
+        color: var(--color-text);
+    }
+
+    .bc-field__label em {
+        color: var(--color-text-muted);
+        font-style: normal;
+    }
+
+    .bc-input {
+        background: var(--color-bg);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-md, 6px);
+        padding: 6px 10px;
+        font-size: var(--text-sm);
+        font-family: var(--font-mono);
+        color: var(--color-text);
+        width: 100%;
+        transition:
+            border-color 0.15s,
+            box-shadow 0.15s;
+        box-sizing: border-box;
+    }
+
+    .bc-input:focus {
+        outline: none;
+        border-color: var(--color-accent);
+        box-shadow: 0 0 0 2px
+            color-mix(in srgb, var(--color-accent) 20%, transparent);
+    }
+
+    .bc-input::placeholder {
+        color: var(--color-text-muted);
+        opacity: 0.6;
+    }
+
+    /* ── Results ─────────────────────────────────────────────────────────── */
+    .bc-card--results {
+        border-color: var(--color-accent);
+    }
+
+    .bc-results {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-3);
+        margin-bottom: var(--space-4);
+    }
+
+    .bc-result-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--space-2);
+    }
+
+    .bc-result-item--color {
+        flex-wrap: wrap;
+    }
+
+    .bc-result-item__label {
+        font-size: var(--text-sm);
+        color: var(--color-text-muted);
+        flex-shrink: 0;
+    }
+
+    .bc-result-item__value {
+        font-family: var(--font-mono);
+        font-size: var(--text-base);
+        font-weight: 700;
+        color: var(--color-text);
+    }
+
+    .bc-color-swatch {
+        display: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 4px;
+        border: 1px solid var(--color-border);
+        flex-shrink: 0;
+        margin-left: var(--space-1);
+    }
+
+    /* ── Reset button ────────────────────────────────────────────────────── */
+    .bc-reset-btn {
+        width: 100%;
+        padding: 7px 14px;
+        border-radius: var(--radius-md, 6px);
+        border: 1px solid var(--color-border);
+        background: var(--color-bg-tertiary, var(--color-bg));
+        color: var(--color-text-muted);
+        font-size: var(--text-sm);
+        cursor: pointer;
+        transition:
+            background 0.15s,
+            color 0.15s;
+    }
+
+    .bc-reset-btn:hover {
+        background: var(--color-bg-secondary);
+        color: var(--color-text);
+    }
+
+    /* ── Footnote ─────────────────────────────────────────────────────────── */
+    .bc-footnote {
+        font-size: var(--text-xs);
+        color: var(--color-text-muted);
+        line-height: 1.5;
+        margin: 0;
+    }
+
+    .bc-footnote a {
+        color: var(--color-accent);
+        text-decoration: none;
+    }
+
+    .bc-footnote a:hover {
+        text-decoration: underline;
+    }
+</style>

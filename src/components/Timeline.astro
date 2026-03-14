@@ -1,0 +1,105 @@
+---
+/**
+ * src/components/Timeline.astro
+ *
+ * Vertical timeline component for CVE disclosure timelines.
+ * Accepts an array of { date, event } entries as props.
+ *
+ * Implements T021.
+ */
+
+export interface TimelineEntry {
+    date: string;
+    event: string;
+}
+
+export interface Props {
+    entries: TimelineEntry[];
+}
+
+const { entries } = Astro.props;
+---
+
+<ol class="timeline" aria-label="Disclosure timeline">
+    {
+        entries.map((entry) => (
+            <li class="timeline__item">
+                <div class="timeline__marker" aria-hidden="true" />
+                <div class="timeline__content">
+                    <time class="timeline__date" datetime={entry.date}>
+                        {new Date(entry.date).toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                        })}
+                    </time>
+                    <p class="timeline__event">{entry.event}</p>
+                </div>
+            </li>
+        ))
+    }
+</ol>
+
+<style>
+    .timeline {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        position: relative;
+    }
+
+    /* Vertical line */
+    .timeline::before {
+        content: "";
+        position: absolute;
+        left: 11px;
+        top: 0;
+        bottom: 0;
+        width: 2px;
+        background: var(--color-border);
+    }
+
+    .timeline__item {
+        display: flex;
+        gap: var(--space-4);
+        padding-bottom: var(--space-6);
+        position: relative;
+    }
+
+    .timeline__item:last-child {
+        padding-bottom: 0;
+    }
+
+    .timeline__marker {
+        flex-shrink: 0;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        background-color: var(--color-accent);
+        border: 3px solid var(--color-bg);
+        box-shadow: 0 0 0 2px var(--color-accent);
+        position: relative;
+        z-index: 1;
+        margin-top: 2px;
+    }
+
+    .timeline__content {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .timeline__date {
+        display: block;
+        font-family: var(--font-mono);
+        font-size: var(--text-sm);
+        color: var(--color-text-muted);
+        margin-bottom: var(--space-1);
+    }
+
+    .timeline__event {
+        margin: 0;
+        font-size: var(--text-base);
+        color: var(--color-text);
+        line-height: var(--leading-relaxed);
+    }
+</style>

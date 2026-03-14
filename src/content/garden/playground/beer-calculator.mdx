@@ -1,0 +1,16 @@
+---
+title: "Homebrew Recipe Calculator"
+date: 2024-11-15
+description: "Plan your all-grain beer recipe. Enter your malt bill and system params to calculate OG, mash water, strike temperature, and wort color."
+pageType: interactive
+tags: ["tools", "beer"]
+scrollable: true
+---
+
+import BeerCalculator from "@components/BeerCalculator.astro";
+
+An all-grain homebrew calculator built on standard formulas:
+**OG** from PPG yields, **mash water** at 1.25 qt/lb, **strike temperature** via Palmer's equation,
+and **SRM color** via the Morey equation.
+
+<BeerCalculator />

@@ -1,0 +1,69 @@
+---
+/**
+ * src/components/SEOHead.astro
+ *
+ * Shared SEO head component. Emits all meta tags required for SEO,
+ * Open Graph, Twitter Cards, and optional JSON-LD structured data.
+ *
+ * Implements the SEOHeadProps interface from:
+ *   specs/001-digital-garden-mvp/contracts/seo-head-props.ts
+ */
+
+export interface Props {
+    title: string;
+    description: string;
+    canonical: string;
+    ogImage?: string;
+    jsonLd?: Record<string, unknown>;
+    noindex?: boolean;
+}
+
+const {
+    title,
+    description,
+    canonical,
+    ogImage = "/og-default.png",
+    jsonLd,
+    noindex = false,
+} = Astro.props;
+
+const siteUrl = "https://alfredgamulo.com";
+const pageTitle =
+    title === "Alfred Gamulo" ? title : `${title} | Alfred Gamulo`;
+const ogImageAbsolute = ogImage.startsWith("http")
+    ? ogImage
+    : `${siteUrl}${ogImage}`;
+---
+
+<!-- Primary Meta Tags -->
+<title>{pageTitle}</title>
+<meta name="description" content={description} />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="canonical" href={canonical} />
+{noindex && <meta name="robots" content="noindex, nofollow" />}
+
+<!-- Open Graph -->
+<meta property="og:type" content="website" />
+<meta property="og:title" content={pageTitle} />
+<meta property="og:description" content={description} />
+<meta property="og:url" content={canonical} />
+<meta property="og:image" content={ogImageAbsolute} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:site_name" content="Alfred Gamulo" />
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content={pageTitle} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={ogImageAbsolute} />
+
+<!-- Favicon -->
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+<!-- JSON-LD Structured Data -->
+{
+    jsonLd && (
+        <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />
+    )
+}

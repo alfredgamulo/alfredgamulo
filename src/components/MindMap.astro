@@ -1,0 +1,689 @@
+---
+/**
+ * src/components/MindMap.astro
+ *
+ * D3 force simulation SVG mind map. Client-only island.
+ * Reads graph data from an inline JSON script tag injected by index.astro.
+ *
+ * Security note: D3 is bundled via npm (not CDN), so no SRI hash is needed.
+ * Pyodide CDN SRI is documented in src/workers/pyodide.worker.ts.
+ *
+ * Implements:
+ *  - T016: D3 force simulation with shape-by-pageType nodes
+ *  - T018: Empty-state when graph.nodes.length === 0
+ *  - EC-002/EC-006: forceCollide radius × 1.5 when link count > 15
+ */
+---
+
+<div id="mind-map-container" class="mind-map-container">
+    <div class="search-bar" role="search">
+        <svg
+            class="search-icon"
+            aria-hidden="true"
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            fill="currentColor"
+        >
+            <path
+                d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.099zm-5.242 1.156a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z"
+            ></path>
+        </svg>
+        <input
+            id="graph-search"
+            type="search"
+            placeholder="Filter posts…"
+            aria-label="Filter graph nodes"
+            autocomplete="off"
+            spellcheck="false"
+        />
+    </div>
+    <svg
+        id="mind-map-svg"
+        class="mind-map-svg"
+        aria-label="Mind map of published pages"
+    >
+        <g id="mind-map-zoom-group">
+            <g id="links-group" class="links-group"></g>
+            <g id="nodes-group" class="nodes-group"></g>
+        </g>
+    </svg>
+</div>
+
+<div
+    id="node-preview-card"
+    class="preview-card"
+    role="tooltip"
+    aria-live="polite"
+>
+    <div class="preview-card__header">
+        <span class="preview-card__type" id="preview-type"></span>
+        <span class="preview-card__date" id="preview-date"></span>
+    </div>
+    <h3 class="preview-card__title" id="preview-title"></h3>
+    <p class="preview-card__description" id="preview-description"></p>
+    <div class="preview-card__tags" id="preview-tags"></div>
+</div>
+
+<script>
+    // D3 bundled via npm — no CDN SRI needed
+    import * as d3 from "d3";
+
+    interface MindMapNode {
+        id: string;
+        label: string;
+        url: string;
+        date: string;
+        description: string;
+        tags: string[];
+        primaryTag: string;
+        pageType: "writeup" | "interactive" | "note" | "tag";
+        // D3 simulation augments at runtime:
+        x?: number;
+        y?: number;
+        vx?: number;
+        vy?: number;
+        fx?: number | null;
+        fy?: number | null;
+        linkCount?: number;
+    }
+
+    interface MindMapLink {
+        source: string | MindMapNode;
+        target: string | MindMapNode;
+        sharedTags: string[];
+        strength: number;
+    }
+
+    interface TagMeta {
+        name: string;
+        slug: string;
+        color: string;
+        pageCount: number;
+    }
+
+    interface MindMapGraph {
+        nodes: MindMapNode[];
+        links: MindMapLink[];
+        tags: TagMeta[];
+    }
+
+    // Read graph data from inline JSON
+    const graphEl = document.getElementById("garden-graph");
+    if (!graphEl) {
+        console.error("MindMap: #garden-graph script element not found");
+    } else {
+        const graph: MindMapGraph = JSON.parse(graphEl.textContent ?? "{}");
+        initMindMap(graph);
+    }
+
+    function initMindMap(graph: MindMapGraph) {
+        const container = document.getElementById(
+            "mind-map-container",
+        ) as HTMLElement;
+        const svg = d3.select<SVGSVGElement, unknown>("#mind-map-svg");
+        const zoomGroup = svg.select<SVGGElement>("#mind-map-zoom-group");
+        const linksGroup = svg.select<SVGGElement>("#links-group");
+        const nodesGroup = svg.select<SVGGElement>("#nodes-group");
+
+        // Tag color map
+        const tagColorMap = new Map(graph.tags.map((t) => [t.name, t.color]));
+
+        function getTagColor(tag: string): string {
+            return tagColorMap.get(tag) ?? "#8b949e";
+        }
+
+        // Empty state
+        if (graph.nodes.length === 0) {
+            svg.append("text")
+                .attr("x", "50%")
+                .attr("y", "50%")
+                .attr("text-anchor", "middle")
+                .attr("dominant-baseline", "middle")
+                .attr("fill", "#8b949e")
+                .attr("font-family", "var(--font-sans)")
+                .attr("font-size", "18")
+                .text(
+                    "No pages yet — add your first .mdx file to src/content/garden/",
+                );
+            return;
+        }
+
+        // Compute link counts for each node (for EC-002/EC-006 collision scaling)
+        const linkCountMap = new Map<string, number>();
+        for (const link of graph.links) {
+            const src =
+                typeof link.source === "string" ? link.source : link.source.id;
+            const tgt =
+                typeof link.target === "string" ? link.target : link.target.id;
+            linkCountMap.set(src, (linkCountMap.get(src) ?? 0) + 1);
+            linkCountMap.set(tgt, (linkCountMap.get(tgt) ?? 0) + 1);
+        }
+        for (const node of graph.nodes) {
+            node.linkCount = linkCountMap.get(node.id) ?? 0;
+        }
+
+        const NODE_BASE_RADIUS = 18;
+
+        // Get viewport dimensions
+        function getSize() {
+            return {
+                width: container.clientWidth || window.innerWidth,
+                height: container.clientHeight || window.innerHeight,
+            };
+        }
+
+        let { width, height } = getSize();
+
+        // Set SVG size
+        svg.attr("width", width).attr("height", height);
+
+        // Sort links by strength descending (EC-002/EC-006: prioritise strong edges)
+        const links = [...graph.links].sort((a, b) => b.strength - a.strength);
+
+        // D3 force simulation
+        const simulation = d3
+            .forceSimulation<MindMapNode>(graph.nodes)
+            .force(
+                "link",
+                d3
+                    .forceLink<MindMapNode, MindMapLink>(links)
+                    .id((d) => d.id)
+                    .distance(90)
+                    .strength(0.4),
+            )
+            .force("charge", d3.forceManyBody<MindMapNode>().strength(-900))
+            .force("center", d3.forceCenter(width / 2, height / 2))
+            .force("x", d3.forceX<MindMapNode>(width / 2).strength(0.06))
+            .force("y", d3.forceY<MindMapNode>(height / 2).strength(0.06))
+            .force(
+                "collide",
+                d3
+                    .forceCollide<MindMapNode>()
+                    .radius((d) => {
+                        // Tag hub nodes are rendered at 2× base radius
+                        if (d.pageType === "tag")
+                            return NODE_BASE_RADIUS * 2 + 24;
+                        // EC-002/EC-006: scale collision radius when link count > 15
+                        // Add extra padding to account for text label width
+                        const labelLen = (d.label?.length ?? 0) * 3.5;
+                        const base = NODE_BASE_RADIUS + Math.max(30, labelLen);
+                        return (d.linkCount ?? 0) > 15 ? base * 1.5 : base;
+                    })
+                    .strength(1),
+            );
+
+        // Render links
+        const linkLines = linksGroup
+            .selectAll<SVGLineElement, MindMapLink>("line")
+            .data(links)
+            .join("line")
+            .attr("class", "link")
+            .attr("stroke", (d) => {
+                const sharedTag = d.sharedTags[0];
+                return getTagColor(sharedTag ?? "");
+            })
+            .attr("stroke-opacity", 0.5)
+            .attr("stroke-width", (d) => Math.max(1, d.strength));
+
+        // Render nodes as <g> containing the shape + label
+        const nodeGroups = nodesGroup
+            .selectAll<SVGGElement, MindMapNode>("g.node")
+            .data(graph.nodes)
+            .join("g")
+            .attr("class", "node")
+            .attr("data-page-type", (d) => d.pageType)
+            .attr("role", "button")
+            .attr("tabindex", "0")
+            .attr("aria-label", (d) => d.label)
+            .style("cursor", "pointer")
+            .call(
+                d3
+                    .drag<SVGGElement, MindMapNode>()
+                    .on("start", (event, d) => {
+                        if (!event.active)
+                            simulation.alphaTarget(0.3).restart();
+                        d.fx = d.x;
+                        d.fy = d.y;
+                    })
+                    .on("drag", (event, d) => {
+                        d.fx = event.x;
+                        d.fy = event.y;
+                    })
+                    .on("end", (event, d) => {
+                        if (!event.active) simulation.alphaTarget(0);
+                        d.fx = null;
+                        d.fy = null;
+                    }),
+            );
+
+        // Draw shape by pageType
+        const RECENCY_DAYS = 90;
+        const now = Date.now();
+
+        /** Convert a hex color to a vivid HSL string for glow use (full saturation, high lightness). */
+        function toGlowColor(hex: string): string {
+            const n = parseInt(hex.slice(1), 16);
+            const r = (n >> 16) / 255;
+            const g = ((n >> 8) & 0xff) / 255;
+            const b = (n & 0xff) / 255;
+            const max = Math.max(r, g, b);
+            const min = Math.min(r, g, b);
+            const d = max - min;
+            let h = 0;
+            if (d !== 0) {
+                if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+                else if (max === g) h = ((b - r) / d + 2) / 6;
+                else h = ((r - g) / d + 4) / 6;
+            }
+            // Boost: full saturation, lightness pushed to ~70% for vivid glow
+            return `hsl(${Math.round(h * 360)},100%,68%)`;
+        }
+
+        nodeGroups.each(function (d) {
+            const group = d3.select(this);
+            const color = getTagColor(d.primaryTag);
+            const r = NODE_BASE_RADIUS;
+
+            // Recency glow: linearly fades from max to 0 over RECENCY_DAYS
+            const ageMs = now - new Date(d.date).getTime();
+            const ageDays = ageMs / 86_400_000;
+            const recency = Math.max(0, 1 - ageDays / RECENCY_DAYS); // 1 = brand new, 0 = old
+            const glowRadius = Math.round(recency * 20); // up to 20px blur
+            const glowColor = toGlowColor(color);
+            const glowFilter =
+                recency > 0 && d.pageType !== "tag"
+                    ? `drop-shadow(0 0 ${glowRadius}px ${glowColor}) drop-shadow(0 0 ${Math.round(glowRadius * 0.5)}px ${glowColor}) drop-shadow(0 0 ${Math.round(glowRadius * 0.2)}px #fff)`
+                    : "none";
+
+            if (d.pageType === "tag") {
+                // Tag hub: larger circle with a pill-style look
+                const tr = r * 2;
+                group
+                    .append("circle")
+                    .attr("r", tr)
+                    .attr("fill", color)
+                    .attr("fill-opacity", 0.18)
+                    .attr("stroke", color)
+                    .attr("stroke-width", 2.5)
+                    .attr("stroke-dasharray", "4 2");
+                group
+                    .append("text")
+                    .attr("text-anchor", "middle")
+                    .attr("dominant-baseline", "middle")
+                    .attr("y", 0)
+                    .attr("fill", color)
+                    .attr("font-size", "12")
+                    .attr("font-weight", "700")
+                    .attr("font-family", "var(--font-sans)")
+                    .attr("pointer-events", "none")
+                    .text(d.label);
+                return; // skip the generic label below
+            } else if (d.pageType === "writeup") {
+                // Circle
+                group
+                    .append("circle")
+                    .attr("r", r)
+                    .attr("fill", color)
+                    .attr("fill-opacity", 0.85)
+                    .attr("stroke", color)
+                    .attr("stroke-width", 2)
+                    .style("filter", glowFilter);
+            } else if (d.pageType === "interactive") {
+                // Diamond (rotated square)
+                const s = r * 1.2;
+                group
+                    .append("polygon")
+                    .attr("points", `0,${-s} ${s},0 0,${s} ${-s},0`)
+                    .attr("fill", color)
+                    .attr("fill-opacity", 0.85)
+                    .attr("stroke", color)
+                    .attr("stroke-width", 2)
+                    .style("filter", glowFilter);
+            } else {
+                // Hexagon (note)
+                const hex = hexPath(r);
+                group
+                    .append("path")
+                    .attr("d", hex)
+                    .attr("fill", color)
+                    .attr("fill-opacity", 0.85)
+                    .attr("stroke", color)
+                    .attr("stroke-width", 2)
+                    .style("filter", glowFilter);
+            }
+
+            // Label below the shape
+            group
+                .append("text")
+                .attr("text-anchor", "middle")
+                .attr("dominant-baseline", "hanging")
+                .attr("y", r + 4)
+                .attr("fill", "var(--color-text)")
+                .attr("font-size", "11")
+                .attr("font-family", "var(--font-sans)")
+                .attr("pointer-events", "none")
+                .text(d.label);
+        });
+
+        // Preview card
+        const card = document.getElementById("node-preview-card")!;
+        const previewTitle = document.getElementById("preview-title")!;
+        const previewDesc = document.getElementById("preview-description")!;
+        const previewType = document.getElementById("preview-type")!;
+        const previewDate = document.getElementById("preview-date")!;
+        const previewTags = document.getElementById("preview-tags")!;
+
+        // Hover events
+        nodeGroups
+            .on("mouseover", (event: MouseEvent, d: MindMapNode) => {
+                showPreview(event, d);
+            })
+            .on("mousemove", (event: MouseEvent) => {
+                positionCard(event);
+            })
+            .on("mouseout", () => {
+                card.classList.remove("visible");
+            })
+            .on("click", (_event: MouseEvent, d: MindMapNode) => {
+                if (d.url) window.location.href = d.url;
+            })
+            .on("keydown", (event: KeyboardEvent, d: MindMapNode) => {
+                if ((event.key === "Enter" || event.key === " ") && d.url) {
+                    window.location.href = d.url;
+                }
+            });
+
+        function showPreview(event: MouseEvent, d: MindMapNode) {
+            // Tag hub nodes are self-labelled; skip the preview card
+            if (d.pageType === "tag") return;
+
+            previewTitle.textContent = d.label;
+            previewDesc.textContent = d.description;
+            previewType.textContent = d.pageType;
+            previewDate.textContent = new Date(d.date).toLocaleDateString(
+                "en-US",
+                {
+                    year: "numeric",
+                    month: "short",
+                    day: "numeric",
+                    timeZone: "UTC",
+                },
+            );
+
+            // Render tag chips
+            previewTags.innerHTML = "";
+            for (const tag of d.tags) {
+                const chip = document.createElement("span");
+                chip.className = "tag-chip";
+                chip.textContent = tag;
+                chip.style.backgroundColor = getTagColor(tag);
+                previewTags.appendChild(chip);
+            }
+
+            positionCard(event);
+            card.classList.add("visible");
+        }
+
+        function positionCard(event: MouseEvent) {
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            const cw = 280 + 24; // card width + offset
+            const ch = 180 + 24;
+            let x = event.clientX + 12;
+            let y = event.clientY + 12;
+            if (x + cw > vw) x = event.clientX - cw;
+            if (y + ch > vh) y = event.clientY - ch;
+            card.style.left = `${x}px`;
+            card.style.top = `${y}px`;
+        }
+
+        // ── Search / filter ──────────────────────────────────────────────
+        const searchInput = document.getElementById(
+            "graph-search",
+        ) as HTMLInputElement;
+
+        function applyFilter(raw: string) {
+            const q = raw.trim().toLowerCase();
+
+            if (!q) {
+                nodeGroups.style("opacity", "1");
+                linkLines.style("opacity", "1");
+                return;
+            }
+
+            const matchIds = new Set<string>();
+            for (const d of graph.nodes) {
+                const haystack = [d.label, d.description, ...d.tags]
+                    .join(" ")
+                    .toLowerCase();
+                if (haystack.includes(q)) matchIds.add(d.id);
+            }
+
+            nodeGroups.style("opacity", (d) =>
+                matchIds.has(d.id) ? "1" : "0.08",
+            );
+
+            linkLines.style("opacity", (d) => {
+                const src =
+                    typeof d.source === "string" ? d.source : d.source.id;
+                const tgt =
+                    typeof d.target === "string" ? d.target : d.target.id;
+                return matchIds.has(src) || matchIds.has(tgt) ? "0.6" : "0.05";
+            });
+        }
+
+        searchInput.addEventListener("input", () =>
+            applyFilter(searchInput.value),
+        );
+
+        searchInput.addEventListener("keydown", (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                searchInput.value = "";
+                applyFilter("");
+                searchInput.blur();
+            }
+        });
+
+        // Simulation tick
+        simulation.on("tick", () => {
+            linkLines
+                .attr("x1", (d) => (d.source as MindMapNode).x ?? 0)
+                .attr("y1", (d) => (d.source as MindMapNode).y ?? 0)
+                .attr("x2", (d) => (d.target as MindMapNode).x ?? 0)
+                .attr("y2", (d) => (d.target as MindMapNode).y ?? 0);
+
+            nodeGroups.attr(
+                "transform",
+                (d) => `translate(${d.x ?? 0},${d.y ?? 0})`,
+            );
+        });
+
+        // D3 zoom (pan + zoom)
+        const zoom = d3
+            .zoom<SVGSVGElement, unknown>()
+            .scaleExtent([0.2, 5])
+            .on("zoom", (event) => {
+                zoomGroup.attr("transform", event.transform.toString());
+            });
+
+        svg.call(zoom);
+
+        // Resize handler
+        window.addEventListener("resize", () => {
+            const size = getSize();
+            width = size.width;
+            height = size.height;
+            svg.attr("width", width).attr("height", height);
+            simulation.force("center", d3.forceCenter(width / 2, height / 2));
+            simulation.alpha(0.3).restart();
+        });
+    }
+
+    /** Generate a regular hexagon SVG path centered at (0,0) with given radius */
+    function hexPath(r: number): string {
+        const points: [number, number][] = [];
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 180) * (60 * i - 30);
+            points.push([r * Math.cos(angle), r * Math.sin(angle)]);
+        }
+        return (
+            points
+                .map(
+                    (p, i) =>
+                        `${i === 0 ? "M" : "L"}${p[0].toFixed(2)},${p[1].toFixed(2)}`,
+                )
+                .join(" ") + " Z"
+        );
+    }
+</script>
+
+<style>
+    .mind-map-container {
+        width: 100%;
+        height: calc(100vh - 49px); /* Subtract nav height */
+        overflow: hidden;
+        position: relative;
+        background: var(--color-bg);
+    }
+
+    .search-bar {
+        position: absolute;
+        top: var(--space-4);
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        background: var(--color-bg-secondary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-full);
+        padding: 6px 14px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        transition:
+            border-color 0.15s,
+            box-shadow 0.15s;
+    }
+
+    .search-bar:focus-within {
+        border-color: var(--color-accent);
+        box-shadow:
+            0 0 0 2px color-mix(in srgb, var(--color-accent) 25%, transparent),
+            0 4px 16px rgba(0, 0, 0, 0.35);
+    }
+
+    .search-icon {
+        color: var(--color-text-muted);
+        flex-shrink: 0;
+    }
+
+    #graph-search {
+        background: transparent;
+        border: none;
+        outline: none;
+        color: var(--color-text);
+        font-family: var(--font-sans);
+        font-size: var(--text-sm);
+        width: 180px;
+    }
+
+    #graph-search::placeholder {
+        color: var(--color-text-muted);
+    }
+
+    #graph-search::-webkit-search-cancel-button {
+        display: none;
+    }
+
+    .mind-map-svg {
+        width: 100%;
+        height: 100%;
+        display: block;
+    }
+
+    :global(.node) {
+        transition: opacity 0.15s;
+    }
+
+    :global(.node:hover) {
+        opacity: 0.85;
+    }
+
+    :global(.link) {
+        transition: stroke-opacity 0.15s;
+    }
+
+    /* Preview Card */
+    .preview-card {
+        position: fixed;
+        z-index: 100;
+        width: 280px;
+        padding: var(--space-4);
+        background: var(--color-bg-secondary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-lg);
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.15s ease;
+    }
+
+    .preview-card.visible {
+        opacity: 1;
+    }
+
+    .preview-card__header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: var(--space-2);
+    }
+
+    .preview-card__type {
+        font-size: var(--text-xs);
+        font-family: var(--font-mono);
+        color: var(--color-accent);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .preview-card__date {
+        font-size: var(--text-xs);
+        color: var(--color-text-muted);
+    }
+
+    .preview-card__title {
+        font-size: var(--text-base);
+        font-weight: 600;
+        margin: 0 0 var(--space-2);
+        line-height: var(--leading-tight);
+    }
+
+    .preview-card__description {
+        font-size: var(--text-sm);
+        color: var(--color-text-muted);
+        margin: 0 0 var(--space-3);
+        line-height: var(--leading-relaxed);
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .preview-card__tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: var(--space-1);
+    }
+
+    :global(.tag-chip) {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: var(--radius-full);
+        font-size: var(--text-xs);
+        font-weight: 500;
+        color: white;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+    }
+</style>

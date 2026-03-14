@@ -1,0 +1,166 @@
+---
+/**
+ * src/layouts/InteractiveLayout.astro
+ *
+ * Full-viewport layout for interactive content (Python editor, canvases, etc.).
+ * Extends BaseLayout with a minimal-chrome body and no content width constraint.
+ *
+ * Implements T027.
+ */
+
+import BaseLayout from "@layouts/BaseLayout.astro";
+
+export interface Props {
+    title: string;
+    description: string;
+    canonical: string;
+    ogImage?: string;
+    noindex?: boolean;
+    tags?: string[];
+    date?: Date;
+    /** Allow page to scroll vertically instead of locking to 100vh. */
+    scrollable?: boolean;
+}
+
+const {
+    title,
+    description,
+    canonical,
+    ogImage,
+    noindex,
+    tags,
+    date,
+    scrollable,
+} = Astro.props;
+---
+
+<BaseLayout
+    title={title}
+    description={description}
+    canonical={canonical}
+    ogImage={ogImage}
+    noindex={noindex}
+    bodyClass={scrollable ? "page-scrollable" : undefined}
+    bodyStyle={scrollable
+        ? "display:block;height:auto;min-height:100vh;overflow:visible;"
+        : undefined}
+    mainStyle={scrollable
+        ? "display:block;height:auto;overflow:visible;"
+        : undefined}
+>
+    {
+        (tags || date) && (
+            <div class="interactive-meta">
+                {date && (
+                    <time
+                        class="interactive-meta__date"
+                        datetime={date.toISOString()}
+                    >
+                        {date.toLocaleDateString("en-US", {
+                            year: "numeric",
+                            month: "long",
+                            day: "numeric",
+                        })}
+                    </time>
+                )}
+                {tags && tags.length > 0 && (
+                    <ul class="interactive-meta__tags" aria-label="Tags">
+                        {tags.map((tag) => (
+                            <li class="tag-chip">{tag}</li>
+                        ))}
+                    </ul>
+                )}
+            </div>
+        )
+    }
+    <div
+        class:list={["interactive-content", { "is-scrollable": scrollable }]}
+        style={scrollable
+            ? "display:block;height:auto;overflow:visible;min-height:unset;"
+            : undefined}
+    >
+        <slot />
+    </div>
+</BaseLayout>
+
+<style>
+    /* Metadata strip above the editor */
+    .interactive-meta {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        flex-wrap: wrap;
+        padding: var(--space-2) var(--space-6);
+        border-bottom: 1px solid var(--color-border);
+        background: var(--color-bg-secondary);
+        flex-shrink: 0;
+    }
+
+    .interactive-meta__date {
+        font-size: var(--text-sm);
+        color: var(--color-text-muted);
+        font-family: var(--font-mono);
+    }
+
+    .interactive-meta__tags {
+        display: flex;
+        gap: var(--space-2);
+        flex-wrap: wrap;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .tag-chip {
+        font-size: var(--text-xs);
+        padding: 2px 10px;
+        border-radius: 999px;
+        background: var(--color-bg-tertiary);
+        color: var(--color-text-muted);
+        border: 1px solid var(--color-border);
+        font-family: var(--font-mono);
+        text-transform: lowercase;
+        letter-spacing: 0.03em;
+    }
+
+    /* Full-viewport body for interactive pages */
+    :global(body) {
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    :global(main) {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        padding: 0;
+        min-height: 0;
+    }
+
+    .interactive-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    /* Scrollable pages (e.g. beer calculator) — body gets class page-scrollable */
+    :global(body.page-scrollable) {
+        height: auto;
+        min-height: 100vh;
+        overflow: auto;
+    }
+
+    :global(body.page-scrollable main) {
+        flex: none;
+        overflow: visible;
+    }
+
+    :global(body.page-scrollable) .interactive-content {
+        flex: none;
+        overflow: visible;
+        min-height: unset;
+    }
+</style>
