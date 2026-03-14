@@ -14,6 +14,7 @@ const RUN_TIMEOUT = 5_000; // SC-003: 10-line script must run within 5s post-loa
 
 test.describe("Python Editor Page", () => {
   test("loads and Pyodide becomes ready", async ({ page }) => {
+    test.setTimeout(PYODIDE_LOAD_TIMEOUT + 30_000);
     await page.goto(EDITOR_PAGE);
 
     // Wait for loading overlay to disappear (Pyodide ready)
@@ -27,6 +28,7 @@ test.describe("Python Editor Page", () => {
   });
 
   test("executes Python code and shows output", async ({ page }) => {
+    test.setTimeout(PYODIDE_LOAD_TIMEOUT + 30_000);
     await page.goto(EDITOR_PAGE);
 
     // Wait for Pyodide to load
@@ -55,6 +57,7 @@ test.describe("Python Editor Page", () => {
   });
 
   test("resets editor to starter code on Reset click", async ({ page }) => {
+    test.setTimeout(PYODIDE_LOAD_TIMEOUT + 30_000);
     await page.goto(EDITOR_PAGE);
 
     // Wait for Pyodide to load
@@ -82,6 +85,7 @@ test.describe("Python Editor Page", () => {
   });
 
   test("shows traceback for Python errors", async ({ page }) => {
+    test.setTimeout(PYODIDE_LOAD_TIMEOUT + 30_000);
     await page.goto(EDITOR_PAGE);
 
     // Wait for Pyodide to load
@@ -105,6 +109,7 @@ test.describe("Python Editor Page", () => {
   });
 
   test("has noscript fallback element", async ({ page }) => {
+    await page.goto(EDITOR_PAGE);
     const html = await page.content();
     expect(html).toContain("<noscript>");
     expect(html).toContain("JavaScript is required");

@@ -19,9 +19,9 @@ test.describe("Mind Map Home Page", () => {
 
   test("shows preview card on node hover", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("g.node", { timeout: 10_000 });
+    await page.waitForSelector("g.node:not([data-page-type='tag'])", { timeout: 10_000 });
 
-    const firstNode = page.locator("g.node").first();
+    const firstNode = page.locator("g.node:not([data-page-type='tag'])").first();
     await firstNode.hover();
 
     // Preview card should become visible
@@ -31,10 +31,10 @@ test.describe("Mind Map Home Page", () => {
 
   test("navigates to page on node click", async ({ page }) => {
     await page.goto("/");
-    await page.waitForSelector("g.node", { timeout: 10_000 });
+    await page.waitForSelector("g.node:not([data-page-type='tag'])", { timeout: 10_000 });
 
     const initialUrl = page.url();
-    const firstNode = page.locator("g.node").first();
+    const firstNode = page.locator("g.node:not([data-page-type='tag'])").first();
     await firstNode.click();
 
     // URL should have changed after click
@@ -53,6 +53,7 @@ test.describe("Mind Map Home Page", () => {
 
   test("noscript fallback contains list of pages", async ({ page }) => {
     // Check that noscript content exists in the HTML source
+    await page.goto("/");
     const html = await page.content();
     expect(html).toContain("<noscript>");
     expect(html).toContain("noscript-fallback");

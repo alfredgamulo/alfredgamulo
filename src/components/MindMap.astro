@@ -232,6 +232,7 @@
             .data(graph.nodes)
             .join("g")
             .attr("class", "node")
+            .attr("data-page-type", (d) => d.pageType)
             .attr("role", "button")
             .attr("tabindex", "0")
             .attr("aria-label", (d) => d.label)
