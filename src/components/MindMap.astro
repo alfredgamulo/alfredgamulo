@@ -16,6 +16,28 @@
 ---
 
 <div id="mind-map-container" class="mind-map-container">
+    <div class="search-bar" role="search">
+        <svg
+            class="search-icon"
+            aria-hidden="true"
+            viewBox="0 0 16 16"
+            width="14"
+            height="14"
+            fill="currentColor"
+        >
+            <path
+                d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398h-.001c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.099zm-5.242 1.156a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z"
+            ></path>
+        </svg>
+        <input
+            id="graph-search"
+            type="search"
+            placeholder="Filter posts…"
+            aria-label="Filter graph nodes"
+            autocomplete="off"
+            spellcheck="false"
+        />
+    </div>
     <svg
         id="mind-map-svg"
         class="mind-map-svg"
@@ -415,6 +437,53 @@
             card.style.top = `${y}px`;
         }
 
+        // ── Search / filter ──────────────────────────────────────────────
+        const searchInput = document.getElementById(
+            "graph-search",
+        ) as HTMLInputElement;
+
+        function applyFilter(raw: string) {
+            const q = raw.trim().toLowerCase();
+
+            if (!q) {
+                nodeGroups.style("opacity", "1");
+                linkLines.style("opacity", "1");
+                return;
+            }
+
+            const matchIds = new Set<string>();
+            for (const d of graph.nodes) {
+                const haystack = [d.label, d.description, ...d.tags]
+                    .join(" ")
+                    .toLowerCase();
+                if (haystack.includes(q)) matchIds.add(d.id);
+            }
+
+            nodeGroups.style("opacity", (d) =>
+                matchIds.has(d.id) ? "1" : "0.08",
+            );
+
+            linkLines.style("opacity", (d) => {
+                const src =
+                    typeof d.source === "string" ? d.source : d.source.id;
+                const tgt =
+                    typeof d.target === "string" ? d.target : d.target.id;
+                return matchIds.has(src) || matchIds.has(tgt) ? "0.6" : "0.05";
+            });
+        }
+
+        searchInput.addEventListener("input", () =>
+            applyFilter(searchInput.value),
+        );
+
+        searchInput.addEventListener("keydown", (e: KeyboardEvent) => {
+            if (e.key === "Escape") {
+                searchInput.value = "";
+                applyFilter("");
+                searchInput.blur();
+            }
+        });
+
         // Simulation tick
         simulation.on("tick", () => {
             linkLines
@@ -475,6 +544,55 @@
         overflow: hidden;
         position: relative;
         background: var(--color-bg);
+    }
+
+    .search-bar {
+        position: absolute;
+        top: var(--space-4);
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        background: var(--color-bg-secondary);
+        border: 1px solid var(--color-border);
+        border-radius: var(--radius-full);
+        padding: 6px 14px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+        transition:
+            border-color 0.15s,
+            box-shadow 0.15s;
+    }
+
+    .search-bar:focus-within {
+        border-color: var(--color-accent);
+        box-shadow:
+            0 0 0 2px color-mix(in srgb, var(--color-accent) 25%, transparent),
+            0 4px 16px rgba(0, 0, 0, 0.35);
+    }
+
+    .search-icon {
+        color: var(--color-text-muted);
+        flex-shrink: 0;
+    }
+
+    #graph-search {
+        background: transparent;
+        border: none;
+        outline: none;
+        color: var(--color-text);
+        font-family: var(--font-sans);
+        font-size: var(--text-sm);
+        width: 180px;
+    }
+
+    #graph-search::placeholder {
+        color: var(--color-text-muted);
+    }
+
+    #graph-search::-webkit-search-cancel-button {
+        display: none;
     }
 
     .mind-map-svg {
