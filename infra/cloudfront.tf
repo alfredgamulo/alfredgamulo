@@ -1,6 +1,8 @@
 # Response Headers Policy — adds COOP/COEP so Pyodide's SharedArrayBuffer works.
 # Browsers gate SharedArrayBuffer (required by Pyodide) behind cross-origin
-# isolation, which requires both headers on every response.
+# isolation, which requires both headers on every response FOR THAT PAGE.
+# Applied via an ordered_cache_behavior scoped to /playground/python-editor* only
+# so COEP doesn't block third-party iframes (e.g. Canva) on other pages.
 resource "aws_cloudfront_response_headers_policy" "site" {
   name    = "${replace(var.domain_name, ".", "-")}-security-headers"
   comment = "COOP + COEP for cross-origin isolation (Pyodide / SharedArrayBuffer)"
@@ -55,8 +57,21 @@ resource "aws_cloudfront_distribution" "site" {
 
     # AWS-managed CachingOptimized policy (ID is a well-known constant)
     cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+  }
 
-    # Adds COOP + COEP headers required for cross-origin isolation (Pyodide)
+  # Pyodide (SharedArrayBuffer) requires cross-origin isolation headers.
+  # Scope them to the Python editor only so COEP doesn't block third-party
+  # embeds (e.g. Canva iframes) on other pages.
+  ordered_cache_behavior {
+    path_pattern     = "/playground/python-editor*"
+    allowed_methods  = ["GET", "HEAD", "OPTIONS"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "s3-${local.bucket_name}"
+
+    viewer_protocol_policy = "redirect-to-https"
+    compress               = true
+
+    cache_policy_id            = "658327ea-f89d-4fab-a63d-7e88639e58f6"
     response_headers_policy_id = aws_cloudfront_response_headers_policy.site.id
   }
 
