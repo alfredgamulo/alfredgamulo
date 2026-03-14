@@ -1,3 +1,25 @@
+# Response Headers Policy — adds COOP/COEP so Pyodide's SharedArrayBuffer works.
+# Browsers gate SharedArrayBuffer (required by Pyodide) behind cross-origin
+# isolation, which requires both headers on every response.
+resource "aws_cloudfront_response_headers_policy" "site" {
+  name    = "${replace(var.domain_name, ".", "-")}-security-headers"
+  comment = "COOP + COEP for cross-origin isolation (Pyodide / SharedArrayBuffer)"
+
+  custom_headers_config {
+    items {
+      header   = "Cross-Origin-Opener-Policy"
+      value    = "same-origin"
+      override = true
+    }
+
+    items {
+      header   = "Cross-Origin-Embedder-Policy"
+      value    = "credentialless"
+      override = true
+    }
+  }
+}
+
 # Origin Access Control — SigV4 signing so CloudFront can read private S3
 resource "aws_cloudfront_origin_access_control" "site" {
   name                              = "${var.domain_name}-oac"
@@ -33,6 +55,9 @@ resource "aws_cloudfront_distribution" "site" {
 
     # AWS-managed CachingOptimized policy (ID is a well-known constant)
     cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+
+    # Adds COOP + COEP headers required for cross-origin isolation (Pyodide)
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.site.id
   }
 
   # Astro outputs /404.html — map both 403 (S3 access denied) and 404 to it
