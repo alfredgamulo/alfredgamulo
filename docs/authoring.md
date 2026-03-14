@@ -169,17 +169,9 @@ After deploying, configure CloudFront to serve the custom 404 page:
 
 Authoring example
 
-1. Create `content/posts/2026-03-13-my-note.md` with front-matter:
+1. Create a new `.mdx` file under `src/content/garden/` in the appropriate subfolder (see **Page Types** above for location and schema).
+2. Add the required frontmatter using the matching example from the **Page Types** section.
+3. Add body content in MDX.
+4. Run `just build` and `just dev` to preview.
 
-```yaml
-title: "My Note"
-description: "Short summary"
-canonical: "/posts/my-note"
-date: 2026-03-13
-
-```
-
-2. Add body content.
-3. Run `just build` and `just dev` to preview.
-
-If adding a new page template or presentation style, include an authoring example in `docs/authoring.md` and a brief maintenance note in the PR.
+If adding a new page template or presentation style, include an updated authoring example in `docs/authoring.md` and a brief maintenance note in the PR.
