@@ -163,6 +163,22 @@
             node.linkCount = linkCountMap.get(node.id) ?? 0;
         }
 
+        // Star node: most recent non-tag post; tie-break by most edges
+        const contentNodes = graph.nodes.filter((n) => n.pageType !== "tag");
+        const starNode =
+            contentNodes.length > 0
+                ? contentNodes.reduce((best, n) => {
+                      const nd = new Date(n.date).getTime();
+                      const bd = new Date(best.date).getTime();
+                      if (nd > bd) return n;
+                      if (nd === bd)
+                          return (n.linkCount ?? 0) >= (best.linkCount ?? 0)
+                              ? n
+                              : best;
+                      return best;
+                  })
+                : null;
+
         const NODE_BASE_RADIUS = 18;
 
         // Get viewport dimensions
@@ -226,6 +242,9 @@
             .attr("stroke-opacity", 0.5)
             .attr("stroke-width", (d) => Math.max(1, d.strength));
 
+        // Flag to pause the star node orbit while it is being dragged
+        let draggingStarNode = false;
+
         // Render nodes as <g> containing the shape + label
         const nodeGroups = nodesGroup
             .selectAll<SVGGElement, MindMapNode>("g.node")
@@ -245,6 +264,7 @@
                             simulation.alphaTarget(0.3).restart();
                         d.fx = d.x;
                         d.fy = d.y;
+                        if (d === starNode) draggingStarNode = true;
                     })
                     .on("drag", (event, d) => {
                         d.fx = event.x;
@@ -254,6 +274,7 @@
                         if (!event.active) simulation.alphaTarget(0);
                         d.fx = null;
                         d.fy = null;
+                        if (d === starNode) draggingStarNode = false;
                     }),
             );
 
@@ -518,6 +539,48 @@
             simulation.force("center", d3.forceCenter(width / 2, height / 2));
             simulation.alpha(0.3).restart();
         });
+
+        // ── Star node slow orbit ─────────────────────────────────────────
+        // The selected node is pinned to the viewport center on load so it
+        // appears there from the first paint. Once the force layout settles
+        // ("end" event) it orbits in a slow circle from its settled position.
+        if (starNode) {
+            const star = starNode;
+            const ORBIT_R = 22; // pixels
+            const PERIOD = 12_000; // ms per full revolution
+
+            // Pin to center for initial paint
+            star.x = width / 2;
+            star.y = height / 2;
+            star.fx = width / 2;
+            star.fy = height / 2;
+
+            let orbitRaf: number;
+
+            function startOrbit() {
+                cancelAnimationFrame(orbitRaf);
+                const cx = star.x ?? width / 2;
+                const cy = star.y ?? height / 2;
+                const t0 = performance.now();
+
+                // Keep the simulation just alive enough for link lines to follow
+                simulation.alphaTarget(0.003).restart();
+
+                function frame() {
+                    if (!draggingStarNode) {
+                        const angle =
+                            (2 * Math.PI * (performance.now() - t0)) / PERIOD;
+                        star.fx = cx + ORBIT_R * Math.cos(angle);
+                        star.fy = cy + ORBIT_R * Math.sin(angle);
+                    }
+                    orbitRaf = requestAnimationFrame(frame);
+                }
+                orbitRaf = requestAnimationFrame(frame);
+            }
+
+            // Start (or restart) the orbit each time the layout fully settles
+            simulation.on("end.starOrbit", startOrbit);
+        }
     }
 
     /** Generate a regular hexagon SVG path centered at (0,0) with given radius */
