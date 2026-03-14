@@ -31,7 +31,7 @@ const { Content } = await render(entry);
 
 const siteUrl = "https://alfredgamulo.com";
 const canonical =
-    entry.data.canonical ?? `${siteUrl}/notes/${Astro.params.slug}`;
+    entry.data.canonical ?? `${siteUrl}/notes/${Astro.params.slug}.html`;
 ---
 
 <NoteLayout

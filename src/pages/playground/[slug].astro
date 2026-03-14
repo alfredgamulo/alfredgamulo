@@ -36,7 +36,7 @@ const { Content } = await render(entry);
 
 const siteUrl = "https://alfredgamulo.com";
 const canonical =
-    entry.data.canonical ?? `${siteUrl}/playground/${Astro.params.slug}`;
+    entry.data.canonical ?? `${siteUrl}/playground/${Astro.params.slug}.html`;
 ---
 
 <InteractiveLayout

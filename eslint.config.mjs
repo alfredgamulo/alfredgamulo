@@ -27,6 +27,7 @@ export default [
       ".astro/**",
       "coverage/**",
       "*.min.js",
+      "infra/**",
     ],
   },
 ];
