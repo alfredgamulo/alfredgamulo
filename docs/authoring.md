@@ -149,23 +149,16 @@ Use the `Justfile` at the repository root:
 | `just dev` | Start local dev server at `http://localhost:4321` |
 | `just build` | Build static site to `dist/` |
 | `just test` | Run npm audit + lint + Playwright e2e + SEO smoke-check |
-| `just deploy` | Deploy to S3 + CloudFront (requires `SITE_BUCKET` env var) |
+| `just infra` | Provision all AWS infrastructure (first-time or idempotent re-run) |
+| `just deploy` | Build + sync `dist/` to S3 + CloudFront cache invalidation (auto-loads `.env.deploy`) |
+| `just infra-destroy` | Tear down all AWS infrastructure (empties S3 bucket first) |
 | `just lighthouse` | Build + run Lighthouse CI assertions |
 
 ---
 
 ## CloudFront Custom 404 Page
 
-After deploying, configure CloudFront to serve the custom 404 page:
-
-1. Open the CloudFront console → your distribution → **Error Pages**
-2. Click **Create custom error response**
-3. Set:
-   - HTTP error code: `404`
-   - Response page path: `/404.html`
-   - HTTP response code: `404`
-4. Save changes (propagation takes ~5 minutes)
-- `just deploy` — upload build to S3 and invalidate CloudFront (requires `SITE_BUCKET` and optional `CLOUDFRONT_DIST_ID`).
+The custom 404 error response is configured automatically by Terraform (`infra/cloudfront.tf`) — no manual console steps required. Both HTTP 403 (S3 access denied) and 404 responses are mapped to `/404.html` with a `404` response code.
 
 Authoring example
 
@@ -175,3 +168,39 @@ Authoring example
 4. Run `just build` and `just dev` to preview.
 
 If adding a new page template or presentation style, include an updated authoring example in `docs/authoring.md` and a brief maintenance note in the PR.
+
+---
+
+## Deployment Architecture
+
+The site is delivered via **S3 + CloudFront** — a zero-runtime, ~$0/month stack at personal blog traffic levels.
+
+### How it works
+
+```
+browser → Route53 (A ALIAS / CNAME) → CloudFront (PriceClass_100)
+                                              ↓ OAC SigV4
+                                         S3 bucket (private)
+```
+
+- **S3 bucket** (`alfredgamulo.com`): stores `dist/` build output; no public access; readable only by CloudFront via OAC.
+- **CloudFront distribution**: HTTPS-only (`redirect-to-https`), `http2and3`, custom domain aliases, `PriceClass_100` (US/CA/EU edges).
+- **ACM certificate**: DNS-validated, covers apex and `www` subdomain; provisioned automatically by Terraform.
+- **Route53**: apex `A ALIAS` and `www CNAME` both point to the CloudFront domain.
+- **CloudWatch dashboard**: visitor traffic metrics (Requests, BytesDownloaded, 4xx/5xx error rates).
+
+### Cost profile
+
+Expected monthly cost at personal blog traffic: **~$0/month** (S3 and CloudFront both have free-tier allowances that comfortably cover a personal site).
+
+Optional: after `just infra`, you may enroll the CloudFront distribution in the flat-rate free tier billing plan (launched Nov 2025) via AWS Console → CloudFront → your distribution → **Savings**. This is not automated.
+
+### Lifecycle commands
+
+| Command | When to use |
+|---------|-------------|
+| `just infra` | First-time setup, or after any Terraform change. Idempotent. |
+| `just deploy` | Every content publish. Builds, syncs, and invalidates cache. |
+| `just infra-destroy` | Permanent teardown only. Deletes all AWS resources. |
+
+After `just infra` completes, a `.env.deploy` file is written at the repo root containing `SITE_BUCKET`, `CLOUDFRONT_DIST_ID`, and `CLOUDFRONT_DOMAIN`. This file is git-ignored. Keep it between sessions — it is the only artifact `just deploy` needs.

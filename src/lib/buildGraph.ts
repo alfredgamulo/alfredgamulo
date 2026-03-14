@@ -60,11 +60,11 @@ function getEntryUrl(entry: CollectionEntry<"garden">): string {
   const parts = entry.id.split("/");
   const leafSlug = parts[parts.length - 1];
   if (pageType === "writeup") {
-    return `/writing/${leafSlug}`;
+    return `/writing/${leafSlug}.html`;
   } else if (pageType === "interactive") {
-    return `/playground/${leafSlug}`;
+    return `/playground/${leafSlug}.html`;
   } else {
-    return `/notes/${leafSlug}`;
+    return `/notes/${leafSlug}.html`;
   }
 }
 
