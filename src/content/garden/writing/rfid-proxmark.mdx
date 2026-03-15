@@ -9,6 +9,8 @@ draft: false
 
 The Radio Frequency Hacker Sanctuary (RFHS) Radio Frequency CTF (RFCTF) is a hardware-focused radio challenge that runs alongside larger security conferences. The RFID track challenges competitors to use a Proxmark3 to bypass access control cards. Your job is to read, clone, or crack each one. What follows is a writeup of the challenges I worked through, along with the terminal output exactly as it came off the device.
 
+![Proxmark3 reading and cloning an RFID card](/rfid.gif)
+
 ## A Quick Proxmark Primer
 
 The [Proxmark3](https://github.com/rfidresearchgroup/proxmark3) is the standard multi-protocol RFID research tool. It handles both **low-frequency (LF)** tags — 125 kHz standards like HID Prox and Indala — and **high-frequency (HF)** tags — 13.56 MHz standards like iClass (also known as PicoPass) and MIFARE. The `pm3` client is the shell you interact with over USB. Most workflows follow the same pattern:
