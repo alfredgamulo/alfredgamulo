@@ -3,6 +3,9 @@ dist/
 # generated types
 .astro/
 
+# vendored Pyodide runtime — downloaded by scripts/vendor-pyodide.sh at build time
+public/pyodide/
+
 # dependencies
 node_modules/
 

@@ -14,9 +14,12 @@ export default defineConfig({
   vite: {
     worker: {
       // Output workers as ES modules to match `new Worker(..., { type: "module" })`.
-      // IIFE format (the Vite default) can't handle top-level CDN ESM imports —
-      // it emits a broken `pyodide_mjs` global reference that is undefined at runtime.
       format: "es",
+      rollupOptions: {
+        // /pyodide/pyodide.mjs lives in public/ and is only available at runtime.
+        // Marking it external prevents Rollup from trying to bundle it.
+        external: ["/pyodide/pyodide.mjs"],
+      },
     },
   },
   integrations: [

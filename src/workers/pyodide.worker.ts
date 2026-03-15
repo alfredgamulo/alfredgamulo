@@ -3,23 +3,15 @@
  *
  * ESM Web Worker for running Python code via Pyodide.
  *
- * SECURITY NOTE — SRI for Pyodide:
- * Pyodide is loaded via ESM import from the CDN below (pinned to v0.27.0).
- * Browser `<script integrity="...">` SRI applies only to HTML script tags, NOT
- * to ESM `import` statements inside Workers. The Fetch/SW spec does not yet
- * support SRI for dynamic ESM imports. As a compensating control, we pin the
- * exact CDN URL and version here. Track Pyodide releases at:
- * https://github.com/pyodide/pyodide/releases
+ * Pyodide is served from /pyodide/ (self-hosted via scripts/vendor-pyodide.sh)
+ * so all assets come from our own origin. This eliminates the cross-origin
+ * resource that triggered COEP violations on the Python editor page.
+ * Update the version constant below when upgrading Pyodide.
  *
  * Implements:
  *  - T026: WorkerRequest / WorkerResponse protocol
- *  - T012b: Pyodide CDN version lock + SRI rationale comment
+ *  - T012b: Pyodide version lock
  */
-
-// Pinned CDN URL — v0.27.0. Update intentionally when upgrading Pyodide.
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
-// @ts-ignore — ESM import from CDN; no .d.ts available at compile time
-import { loadPyodide } from "https://cdn.jsdelivr.net/pyodide/v0.27.0/full/pyodide.mjs";
 
 // ─── Protocol Types ────────────────────────────────────────────────────────────
 
@@ -36,7 +28,8 @@ type WorkerResponse =
 
 // ─── Worker State ─────────────────────────────────────────────────────────────
 
-let pyodide: Awaited<ReturnType<typeof loadPyodide>> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let pyodide: any = null;
 
 function post(msg: WorkerResponse) {
   self.postMessage(msg);
@@ -46,7 +39,14 @@ function post(msg: WorkerResponse) {
 
 async function init() {
   try {
+    // Dynamic import keeps Vite from trying to bundle /pyodide/pyodide.mjs
+    // (it lives in public/ and is only available at runtime).
+    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+    // @ts-ignore — no .d.ts for self-hosted Pyodide ESM
+    const { loadPyodide } = await import(/* @vite-ignore */ "/pyodide/pyodide.mjs");
     pyodide = await loadPyodide({
+      // Tell Pyodide where to find its wasm/stdlib — must match vendor script path.
+      indexURL: "/pyodide/",
       // Redirect stdout/stderr to worker messages
       stdout: (text: string) => post({ type: "stdout", text }),
       stderr: (text: string) => post({ type: "stderr", text }),

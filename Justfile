@@ -2,8 +2,12 @@ set shell := ["/bin/bash", "-euxo", "pipefail", "-c"]
 
 export AWS_PROFILE := "core"
 
+# Download Pyodide core runtime files to public/pyodide/ (self-hosted to avoid COEP violations)
+vendor-pyodide:
+    bash scripts/vendor-pyodide.sh
+
 # Build the static site with Astro
-build:
+build: vendor-pyodide
     npm run build
 
 # Run local Astro development server (hot-reload at localhost:4321)
