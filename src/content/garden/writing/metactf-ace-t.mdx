@@ -1,0 +1,126 @@
+---
+title: "MetaCTF ACE-T: Five Beginner Challenges Solved"
+date: 2023-07-18
+description: "Five MetaCTF ACE-T challenges solved: MD5 cracking, memory forensics, S3 enumeration, image OSINT, and zip password recovery."
+pageType: writeup
+tags: ["ctf"]
+draft: false
+---
+
+MetaCTF is a platform-based CTF that runs ongoing challenge sets aimed at learners. The ACE-T set is a good entry point — the challenges are short and self-contained, each one drilling a single tool or technique. Here are solutions for the five I worked through.
+
+## A Naive Hash
+
+**Challenge prompt:**
+
+> Hashing is a method of reducing some input to a fixed-length signature. There is no way to decrypt the original messages without guessing some possibilities. Can you crack this MD5 hash?
+>
+> `5c2981b42e5bc96ad70cf064290b70b4`
+
+MD5 with rockyou is the standard starting point. Install hashcat, grab the wordlist, and run:
+
+```bash
+brew install hashcat
+
+curl -OL https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt
+
+# mode 0 = raw MD5, attack mode 0 = dictionary
+hashcat -m 0 -a 0 hash.txt rockyou.txt
+
+# once done, show the cracked result
+hashcat -m 0 -a 0 hash.txt rockyou.txt --show
+```
+
+Put the hash alone in `hash.txt` (`echo '5c2981b42e5bc96ad70cf064290b70b4' > hash.txt`). Hashcat will find it in rockyou almost instantly — MD5 is fast to compute and the wordlist covers most common passwords.
+
+The challenge title hints at why: MD5 without a per-user salt is "naive." Once a hash appears in any public dump, it's effectively cracked forever.
+
+## All Strung Out
+
+**Challenge prompt:**
+
+> Find the first flag in `evidence.zip`.
+>
+> The flag hidden in this challenge is in the format: `flag{value}`
+
+Unzip the archive, then grep directly inside the `.mem` file. Memory dumps are binary, but `grep` handles that fine — the flag is stored as a plaintext string somewhere in the dump:
+
+```bash
+unzip evidence.zip
+grep -E "flag\{.*\}" evidence.mem
+```
+
+`-E` enables extended regex so the `{.*}` wildcard works. The flag will print with its surrounding memory context. If there's noise, pipe through `strings` first to reduce it:
+
+```bash
+strings evidence.mem | grep -E "flag\{.*\}"
+```
+
+`strings` extracts all runs of printable ASCII characters from the binary, which makes the flag pop out cleanly.
+
+## Breaching Buckets
+
+**Challenge prompt:**
+
+> Take a look at where this image is hosted. See if you can find the flag! Does anything stand out?
+
+The image URL reveals it's hosted on an S3 bucket — `prod-cdn-user-imgs`. Public S3 buckets with misconfigured ACLs will let anyone list and download their contents:
+
+```bash
+aws s3 ls prod-cdn-user-imgs --recursive
+aws s3 cp --recursive s3://prod-cdn-user-imgs .
+```
+
+This pulls down every object in the bucket. Browse through the downloaded images — the flag is embedded in one of them, either in the image itself or in the filename/metadata.
+
+The misconfiguration here is the bucket being set to `public-read` on all objects without restricting `s3:ListBucket`. List access lets an attacker enumerate every key in the bucket, not just access known URLs. Many teams enable object-level public access for their CDN but forget to restrict listing.
+
+## OSINT Time
+
+**Challenge prompt:**
+
+> Your co-worker Leo refused to tell anyone where he was going on vacation. You saw him post an Instagram of a super cute sloth and you REALLY want to know where it was taken. See if you can figure it out.
+
+Camera apps and some social platforms embed GPS coordinates or other metadata in JPEG EXIF data. Download the image and check:
+
+```bash
+exiftool $DOWNLOADS/sloth.jpg | grep -i comment
+```
+
+`exiftool` parses all EXIF, IPTC, and XMP metadata. The `-i comment` grep targets the comment field, which is where the location hint is stored for this challenge. Check all fields if the first grep is empty:
+
+```bash
+exiftool $DOWNLOADS/sloth.jpg
+```
+
+GPS coordinates appear as `GPS Latitude` / `GPS Longitude` fields if the camera wrote them — plug those into Google Maps to get the location. A `Comment` field may contain a text description directly.
+
+## The Last Great Zip File
+
+**Challenge prompt:**
+
+> Help! I've created a zip archive that contains my favorite flag, but I forgot the password to it. Can you help me recover my flag back?
+
+Standard zip password recovery: extract the hash from the zip and crack it with John the Ripper.
+
+```bash
+wget https://metaproblems.com/4c8353df44a1dc0c5535ec84fa8da70e/flag.zip
+```
+
+Build John from source (the distro packages are often outdated and missing the zip module):
+
+```bash
+git clone https://github.com/openwall/john
+cd john/src
+./configure && make
+```
+
+Extract the password hash from the zip, then crack it:
+
+```bash
+./john/run/zip2john flag.zip > zip.hashes
+./john/run/john --wordlist=/usr/share/wordlists/rockyou.txt zip.hashes
+./john/run/john zip.hashes --show
+```
+
+`zip2john` extracts the PKZIP encryption header into a format John can attack. With rockyou the password will crack in seconds if it's a common word. Once cracked, `--show` prints `filename:password`, and you can unzip with that password to get the flag.

