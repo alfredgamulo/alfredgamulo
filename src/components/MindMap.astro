@@ -181,6 +181,15 @@
 
         const NODE_BASE_RADIUS = 18;
 
+        // Glow anchor: most recently published content node gets full glow;
+        // older posts fade to zero over RECENCY_DAYS from that date.
+        const newestContentMs =
+            contentNodes.length > 0
+                ? Math.max(
+                      ...contentNodes.map((n) => new Date(n.date).getTime()),
+                  )
+                : Date.now();
+
         // Get viewport dimensions
         function getSize() {
             return {
@@ -280,7 +289,6 @@
 
         // Draw shape by pageType
         const RECENCY_DAYS = 90;
-        const now = Date.now();
 
         /** Convert a hex color to a vivid HSL string for glow use (full saturation, high lightness). */
         function toGlowColor(hex: string): string {
@@ -307,7 +315,8 @@
             const r = NODE_BASE_RADIUS;
 
             // Recency glow: linearly fades from max to 0 over RECENCY_DAYS
-            const ageMs = now - new Date(d.date).getTime();
+            // Anchor is the newest published post, not wall-clock time.
+            const ageMs = newestContentMs - new Date(d.date).getTime();
             const ageDays = ageMs / 86_400_000;
             const recency = Math.max(0, 1 - ageDays / RECENCY_DAYS); // 1 = brand new, 0 = old
             const glowRadius = Math.round(recency * 20); // up to 20px blur
