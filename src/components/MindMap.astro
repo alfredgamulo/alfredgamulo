@@ -300,6 +300,15 @@
             const min = Math.min(r, g, b);
             const d = max - min;
             let h = 0;
+            /**
+             * Calculates the hue (h) component for an RGB color, given the difference (d) between the max and min RGB values.
+             * The calculation is based on which RGB channel is the maximum:
+             * - If red (r) is max, hue is calculated using green and blue values.
+             * - If green (g) is max, hue is calculated using blue and red values.
+             * - If blue (b) is max, hue is calculated using red and green values.
+             * The result is normalized to a range between 0 and 1.
+             * This is part of the RGB to HSL color conversion algorithm.
+             */
             if (d !== 0) {
                 if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
                 else if (max === g) h = ((b - r) / d + 2) / 6;

