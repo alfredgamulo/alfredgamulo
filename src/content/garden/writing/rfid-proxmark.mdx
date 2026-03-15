@@ -22,6 +22,57 @@ A cheaper alternative for pure emulation is the [Chameleon Ultra](https://github
 
 ---
 
+## Card Type Reference
+
+Before diving into the challenges, here is a quick reference for every card type mentioned in this post. Physical access control is a fragmented market — different vendors, frequencies, and security models all coexist in the same buildings.
+
+### Low-Frequency (125 kHz) Cards
+
+LF cards are the older, simpler generation. The reader powers the card inductively and the card responds by modulating the RF field. There is no mutual authentication — the reader just listens for the card's ID. This makes LF cards fundamentally weaker: anyone who can read the ID can replay it.
+
+**HID Prox**
+The dominant LF access control credential in North America. Made by HID Global, it encodes a facility code (FC) and card number (CN) as a Wiegand bitstream. The most common variant is 26-bit Wiegand, though HID supports formats from 26 to 48+ bits. The card number is often printed on the badge in plain text — a significant physical security antipattern. The underlying chip is typically an EM4x05 or EM4x69 in read-only configuration.
+
+**Indala**
+An older 125 kHz proprietary format, also owned by HID Global after they acquired Motorola's access control line. Indala encodes a 64-bit or 224-bit raw value. It predates HID Prox's dominance and still appears in legacy installations. Like HID Prox, there is no authentication — possession of the raw ID is sufficient to clone the credential.
+
+**EM4100 / EM4x05 / EM4x69**
+A family of LF tag chips from EM Microelectronic. EM4100 is a classic 64-bit read-only transponder used in cheap keyfobs and basic access control. EM4x05 and EM4x69 are more capable versions with password-protected write access and multiple data pages — these chips are often used as the carrier for HID Prox and similar credentials. The T55xx (see below) is a popular writeable emulator for this entire family.
+
+**T55xx**
+Not a protocol but a chip — a configurable, writeable LF transponder that can emulate HID Prox, Indala, EM4100, and most other 125 kHz formats. Sold as blank "cloner cards" for a few dollars. After writing the target credential with `lf [protocol] clone`, the card becomes a functional physical copy.
+
+---
+
+### High-Frequency (13.56 MHz) Cards
+
+HF cards operate an order of magnitude faster and generally include some form of cryptographic authentication. The two dominant standards are ISO 14443 (short-range, ~10 cm) and ISO 15693 (longer-range, ~1 m).
+
+**MIFARE Classic**
+Developed by NXP Semiconductors. The most widely deployed contactless smart card in the world — used in transit systems, hotel keys, and access control globally. It uses a proprietary stream cipher called Crypto-1, which was fully reverse-engineered by academics in 2008 and is now considered broken. The Proxmark can crack MIFARE Classic keys with nested and darkside attacks in seconds. The Chameleon Ultra also handles MIFARE Classic emulation well.
+
+**MIFARE Ultralight / NTAG**
+Simpler, cheaper NXP cards with no authentication — just a 7-byte UID and a small amount of writable memory. Used in single-use transit tickets, event wristbands, and NFC stickers. The UID can be emulated freely.
+
+**MIFARE DESFire**
+The modern, secure successor to MIFARE Classic. Uses AES-128 or 3DES with mutual authentication and a proper random-number-based challenge-response. Significantly harder to attack — there is no known plaintext attack on DESFire EV2/EV3 with correctly configured keys. You need either the application key or a side-channel approach. The Chameleon Ultra has partial emulation support.
+
+**iClass / PicoPass**
+HID Global's high-frequency access control platform, operating on ISO 15693 / ISO 14443B. Far more common in enterprise physical security than MIFARE. It uses a proprietary mutual authentication scheme with a 64-bit key diversified per-card using the card's CSN. Two deployment modes matter for attackers:
+
+- **Standard mode** — uses the publicly known default Kd (`AFA785A7DAB33378`). Many real-world deployments never change this. Trivially broken with `hf iclass chk`.
+- **Elite (custom) mode** — uses a site-specific master key that is unknown. Requires the MAC capture + `loclass` bruteforce attack described in Challenge 5.
+
+The Chameleon Ultra does **not** support iClass emulation.
+
+**ISO 14443A vs ISO 14443B**
+Both are short-range 13.56 MHz standards but with incompatible modulation schemes. ISO 14443A is used by MIFARE. ISO 14443B is used by iClass and some government ID cards. The Proxmark handles both; the Chameleon Ultra handles only 14443A.
+
+**ISO 15693 (vicinity cards)**
+Longer-range 13.56 MHz standard, readable up to ~1 metre. Used in library books, asset tracking, and some building access systems (iClass also uses this layer). Generally read-only tags with no authentication.
+
+---
+
 ## Challenge 1 — HID Prox: Read and Replay
 
 The first target was a standard HID Prox badge, the kind protecting office doors everywhere. Start with a generic search:
