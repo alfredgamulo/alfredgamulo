@@ -14,6 +14,12 @@
       "target": "/home/node/.aws",
       "type": "bind",
       "readonly": true
+    },
+    {
+      "source": "${localEnv:HOME}/.ssh",
+      "target": "/home/node/.ssh",
+      "type": "bind",
+      "readonly": true
     }
   ],
   "postCreateCommand": "[ -f package.json ] && sudo chown -R node:node /workspaces/alfredgamulo/node_modules && npm install || true",

