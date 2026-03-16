@@ -1,0 +1,308 @@
+---
+title: "Website Change Detection with Lambda, S3, and SNS"
+date: 2026-03-16
+description: "A simple serverless setup to detect when a website changes and email you about it — no infrastructure to maintain."
+pageType: writeup
+tags: ["cloud", "tools"]
+draft: false
+---
+
+Sometimes you just want to know when a page changes. Maybe a vendor's status page, a product release page, or any site that doesn't offer an RSS feed. The idea here is simple: fetch the page, hash the content, compare it to the last known hash, and fire a notification if anything differs. Lambda handles the logic on a schedule, S3 holds the previous hash, and SNS delivers the alert.
+
+No polling service subscriptions, no third-party accounts — just a few AWS resources that cost essentially nothing to run.
+
+## How It Works
+
+1. Lambda fetches the target URL with a random user agent
+2. It hashes the page content with SHA-256
+3. It reads the previously stored hash from S3
+4. If the hashes differ, it writes the new hash to S3 and publishes a message to an SNS topic
+5. EventBridge triggers the function on a schedule you control
+
+## The Lambda Function
+
+Save this as `page_delta.py`. All environment-specific values come in through environment variables — none of them are hardcoded.
+
+```python
+import boto3
+from botocore.exceptions import ClientError
+import hashlib
+import json
+import os
+import random
+from urllib.request import Request, urlopen
+
+URL           = os.environ['URL']
+BUCKET_NAME   = os.environ['BUCKET_NAME']
+HASH_KEY      = os.environ.get('HASH_KEY', 'page-delta')
+SNS_TOPIC_ARN = os.environ['SNS_TOPIC_ARN']
+
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64; rv:123.0) Gecko/20100101 Firefox/123.0',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0',
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Mobile/15E148 Safari/604.1',
+]
+
+
+def get_page_hash(url: str) -> str:
+    req = Request(url, headers={'User-Agent': random.choice(USER_AGENTS)})
+    with urlopen(req) as response:
+        return hashlib.sha256(response.read()).hexdigest()
+
+
+def lambda_handler(event, context):
+    new_hash = get_page_hash(URL)
+    old_hash = None
+
+    s3 = boto3.client('s3')
+    try:
+        obj = s3.get_object(Bucket=BUCKET_NAME, Key=HASH_KEY)
+        old_hash = obj['Body'].read().decode('utf-8').strip()
+    except ClientError as e:
+        if e.response['Error']['Code'] not in ('NoSuchKey', '404'):
+            raise
+
+    if old_hash != new_hash:
+        s3.put_object(Body=new_hash, Bucket=BUCKET_NAME, Key=HASH_KEY)
+        boto3.client('sns').publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Subject='Page update detected',
+            Message=f'Page update detected.\n\nURL: {URL}\nNew hash: {new_hash}\nOld hash: {old_hash}',
+        )
+
+    return {'statusCode': 200, 'body': 'ok'}
+```
+
+A few things worth noting versus a naive first implementation:
+
+- **`random.choice(USER_AGENTS)`** instead of `random.randint(0, n)` — the bound is derived from the list automatically, so adding or removing agents doesn't break anything.
+- **SHA-256** instead of SHA-224 — more standard, same performance.
+- **`get_object` + catch `NoSuchKey`** instead of `head_object` followed by `get_object` — one fewer round trip on every invocation after the first. Other S3 errors still propagate so you don't silently swallow real failures.
+- **Plain SNS message** instead of the double-JSON `MessageStructure='json'` envelope — simpler to read in an email or a Slack forwarding rule.
+
+## Terraform
+
+Three files cover the full deployment: input variables, core resources, and the outputs you'll need afterward.
+
+### variables.tf
+
+```hcl
+variable "url" {
+  description = "URL of the page to monitor."
+  type        = string
+}
+
+variable "email" {
+  description = "Email address to subscribe for notifications. Leave empty to skip."
+  type        = string
+  default     = ""
+}
+
+variable "schedule_expression" {
+  description = "EventBridge rate or cron expression controlling how often the function runs."
+  type        = string
+  default     = "rate(1 hour)"
+}
+
+variable "aws_region" {
+  description = "AWS region to deploy into."
+  type        = string
+  default     = "us-east-1"
+}
+```
+
+### main.tf
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = var.aws_region
+}
+
+# ── S3 ─────────────────────────────────────────────────────────────────────────
+
+resource "aws_s3_bucket" "state" {
+  bucket_prefix = "page-delta-"
+  force_destroy = true
+}
+
+# ── SNS ────────────────────────────────────────────────────────────────────────
+
+resource "aws_sns_topic" "notify" {
+  name = "page-delta-notify"
+}
+
+resource "aws_sns_topic_subscription" "email" {
+  count     = var.email != "" ? 1 : 0
+  topic_arn = aws_sns_topic.notify.arn
+  protocol  = "email"
+  endpoint  = var.email
+}
+
+# ── IAM ────────────────────────────────────────────────────────────────────────
+
+resource "aws_iam_role" "lambda" {
+  name = "page-delta-lambda"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "lambda" {
+  role = aws_iam_role.lambda.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject"]
+        Resource = "${aws_s3_bucket.state.arn}/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "sns:Publish"
+        Resource = aws_sns_topic.notify.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = "arn:aws:logs:*:*:*"
+      }
+    ]
+  })
+}
+
+# ── Lambda ─────────────────────────────────────────────────────────────────────
+
+data "archive_file" "lambda" {
+  type        = "zip"
+  source_file = "${path.module}/page_delta.py"
+  output_path = "${path.module}/page_delta.zip"
+}
+
+resource "aws_lambda_function" "page_delta" {
+  function_name    = "page-delta"
+  role             = aws_iam_role.lambda.arn
+  handler          = "page_delta.lambda_handler"
+  runtime          = "python3.12"
+  filename         = data.archive_file.lambda.output_path
+  source_code_hash = data.archive_file.lambda.output_base64sha256
+  timeout          = 30
+
+  environment {
+    variables = {
+      URL           = var.url
+      BUCKET_NAME   = aws_s3_bucket.state.id
+      SNS_TOPIC_ARN = aws_sns_topic.notify.arn
+    }
+  }
+}
+
+# ── Schedule ───────────────────────────────────────────────────────────────────
+
+resource "aws_cloudwatch_event_rule" "schedule" {
+  name                = "page-delta-schedule"
+  schedule_expression = var.schedule_expression
+}
+
+resource "aws_cloudwatch_event_target" "lambda" {
+  rule      = aws_cloudwatch_event_rule.schedule.name
+  target_id = "page-delta"
+  arn       = aws_lambda_function.page_delta.arn
+}
+
+resource "aws_lambda_permission" "cloudwatch" {
+  statement_id  = "AllowCloudWatchInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.page_delta.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.schedule.arn
+}
+```
+
+### outputs.tf
+
+```hcl
+output "sns_topic_arn" {
+  description = "ARN of the SNS topic. Use this to add additional subscriptions."
+  value       = aws_sns_topic.notify.arn
+}
+
+output "s3_bucket" {
+  description = "Name of the S3 bucket holding the current hash."
+  value       = aws_s3_bucket.state.id
+}
+
+output "lambda_function_name" {
+  description = "Name of the deployed Lambda function."
+  value       = aws_lambda_function.page_delta.function_name
+}
+```
+
+## Getting Email Notifications
+
+When you pass an `email` variable, Terraform creates an SNS email subscription. SNS will send a confirmation email to that address — **you must click the confirmation link** before any alerts will be delivered. Check your spam folder if it doesn't show up within a minute or two.
+
+If you want to add more subscribers later without re-running Terraform, you can do it directly in the console under SNS → Topics → page-delta-notify → Create subscription, or with the CLI:
+
+```bash
+aws sns subscribe \
+  --topic-arn <sns_topic_arn output> \
+  --protocol email \
+  --notification-endpoint another@example.com
+```
+
+SNS also supports SMS, HTTPS webhooks, SQS queues, and Lambda as subscriber protocols, so it's straightforward to forward alerts into Slack or PagerDuty without touching the function itself.
+
+## Deploying
+
+Place `page_delta.py`, `variables.tf`, `main.tf`, and `outputs.tf` in the same directory, then:
+
+```bash
+terraform init
+terraform apply \
+  -var="url=https://example.com/releases" \
+  -var="email=you@example.com"
+```
+
+Alternatively, create a `terraform.tfvars` file to avoid passing vars on every apply:
+
+```hcl
+url   = "https://example.com/releases"
+email = "you@example.com"
+```
+
+After `apply` completes, confirm the SNS subscription email and the function will start checking on the next scheduled run. To test it immediately without waiting for the schedule:
+
+```bash
+aws lambda invoke \
+  --function-name page-delta \
+  --payload '{}' \
+  response.json && cat response.json
+```
+
+### Input Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `url` | — | **Required.** URL of the page to monitor. |
+| `email` | `""` | Email address for notifications. Empty skips subscription creation. |
+| `schedule_expression` | `rate(1 hour)` | How often to check. Accepts `rate()` or `cron()` expressions. |
+| `aws_region` | `us-east-1` | AWS region for all resources. |

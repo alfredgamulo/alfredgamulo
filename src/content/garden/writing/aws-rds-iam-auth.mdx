@@ -1,0 +1,218 @@
+---
+title: "RDS IAM Authentication: Ditch the Password"
+date: 2026-03-16
+description: "How to connect to Amazon RDS PostgreSQL using short-lived IAM tokens instead of static database passwords — and why you should."
+pageType: writeup
+tags: ["cloud", "security"]
+draft: false
+---
+
+Static database passwords are one of the more quietly uncomfortable facts of running production infrastructure. They're long-lived, they end up in environment variables and secrets managers and `.pgpass` files, and when they do rotate, something inevitably breaks. Amazon RDS supports a better option: IAM database authentication, where the password is replaced by a short-lived token generated from your existing AWS credentials. Nothing to store, nothing to rotate, and access policy lives in IAM alongside everything else.
+
+## Why This Is Better Than a Password
+
+### Passwords are static; tokens are ephemeral
+
+An IAM auth token is valid for 15 minutes. If it leaks, the blast radius is bounded. A leaked database password is valid until someone notices and rotates it — which in practice can be days, weeks, or never.
+
+### No credentials to store
+
+With a traditional database user, you need to get the password from somewhere at connection time: an environment variable, a secrets manager entry, a config file. Each of those is a place a credential can be exposed. IAM auth tokens are generated on demand by the same AWS credentials your application is already using — there's nothing extra to store.
+
+### Access control centralizes in IAM
+
+Granting or revoking database access becomes an IAM policy change rather than a `GRANT`/`REVOKE` statement run against the database directly. You can use the full IAM toolbox: conditions on source IP or VPC, permission boundaries, Service Control Policies. Auditing access is a CloudTrail query instead of a database log grep.
+
+### Encryption in transit is enforced
+
+IAM DB authentication requires SSL. You cannot use a token-based connection without it, which means you can't accidentally leave encryption off.
+
+### Works naturally with instance profiles and Lambda
+
+When your application runs on EC2 or Lambda, it already has an IAM role attached. That role can be granted permission to generate auth tokens for specific RDS users — no credentials to inject into the environment at all.
+
+## How It Works
+
+The flow for an IAM-authenticated connection is:
+
+1. Your application calls `aws rds generate-db-auth-token`, which hits the RDS signing endpoint and returns a pre-signed URL string.
+2. That string is passed as the database password when opening the connection.
+3. RDS validates the signature against IAM and, if the caller has the required `rds-db:connect` permission, grants access.
+
+The database user still exists in PostgreSQL — IAM auth doesn't remove the concept of a database user. What it does is replace the password mechanism: instead of PostgreSQL checking a stored hash, it delegates the check to IAM by verifying the token.
+
+## Setup
+
+### 1. Enable IAM authentication on the RDS instance
+
+When creating a new instance, check **"Enable IAM DB Authentication"** in the console, or pass `--enable-iam-database-authentication` to the CLI. For an existing instance:
+
+```bash
+aws rds modify-db-instance \
+  --db-instance-identifier your-db-instance \
+  --enable-iam-database-authentication \
+  --apply-immediately
+```
+
+### 2. Create the database user with the `rds_iam` role
+
+Connect with your current admin credentials and run:
+
+```sql
+CREATE USER app_user WITH LOGIN;
+GRANT rds_iam TO app_user;
+```
+
+The `rds_iam` role tells PostgreSQL to delegate password checks to RDS IAM. The user should have only the privileges it needs — don't grant `rds_iam` to a superuser.
+
+### 3. Attach an IAM policy
+
+The IAM principal that will generate tokens (a role, user, or instance profile) needs `rds-db:connect` on the specific database user resource. Replace the placeholders with your values:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["rds-db:connect"],
+      "Resource": [
+        "arn:aws:rds-db:<region>:<account-id>:dbuser:<db-resource-id>/<db-username>"
+      ]
+    }
+  ]
+}
+```
+
+The `db-resource-id` is the RDS resource identifier (starts with `db-`), visible on the instance detail page in the console or via:
+
+```bash
+aws rds describe-db-instances \
+  --db-instance-identifier your-db-instance \
+  --query 'DBInstances[0].DbiResourceId'
+```
+
+## Connecting
+
+### From IAM credentials (the simple path)
+
+If you're running locally with an AWS profile, or from an environment where the IAM principal is already assumed:
+
+```bash
+REGION=us-east-1
+RDSHOST=your-instance.xxxxxx.us-east-1.rds.amazonaws.com
+DB_USER=app_user
+DB_NAME=your_database
+
+export PGPASSWORD="$(
+  aws rds generate-db-auth-token \
+    --hostname "$RDSHOST" \
+    --port 5432 \
+    --username "$DB_USER" \
+    --region "$REGION"
+)"
+
+psql "host=$RDSHOST dbname=$DB_NAME user=$DB_USER sslmode=require"
+```
+
+### From an IAM role (EC2, Lambda, cross-account)
+
+PostgreSQL itself doesn't support role-based authentication — it only understands the credentials in use when the connection is opened. If you're running as an IAM role and want to generate a token scoped to a *different* role (common in cross-account setups or when your instance profile has broad permissions), you need to assume the role first to get a credential set, then generate the token from those credentials.
+
+Save this as `rds-iam-connect.sh`:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ── Configuration ────────────────────────────────────────────────────────────
+REGION="${REGION:-us-east-1}"
+ROLE_ARN="${ROLE_ARN}"             # arn:aws:iam::<account-id>:role/<role-name>
+RDSHOST="${RDSHOST}"               # your-instance.xxxxxx.<region>.rds.amazonaws.com
+DB_USER="${DB_USER:-app_user}"
+DB_NAME="${DB_NAME:-postgres}"
+DURATION="${DURATION:-900}"        # token lifetime in seconds (max 3600)
+# ─────────────────────────────────────────────────────────────────────────────
+
+SESSION_NAME="rds-iam-$(date +%s)"
+
+credentials="$(
+  aws sts assume-role \
+    --role-arn "$ROLE_ARN" \
+    --role-session-name "$SESSION_NAME" \
+    --duration-seconds "$DURATION" \
+    --region "$REGION" \
+    --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+    --output text
+)"
+
+export AWS_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY
+export AWS_SESSION_TOKEN
+
+read -r AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN <<< "$credentials"
+
+export PGPASSWORD
+PGPASSWORD="$(
+  aws rds generate-db-auth-token \
+    --hostname "$RDSHOST" \
+    --port 5432 \
+    --username "$DB_USER" \
+    --region "$REGION"
+)"
+
+psql "host=$RDSHOST dbname=$DB_NAME user=$DB_USER sslmode=require"
+```
+
+Usage — pass configuration as environment variables:
+
+```bash
+REGION=us-east-1 \
+ROLE_ARN=arn:aws:iam::123456789012:role/RDSAccessRole \
+RDSHOST=your-instance.xxxxxx.us-east-1.rds.amazonaws.com \
+DB_USER=app_user \
+DB_NAME=your_database \
+bash rds-iam-connect.sh
+```
+
+### Script improvements over the original
+
+- **`--query` on `assume-role`** with `read -r` replaces backtick+`jq` parsing — no `jq` dependency, cleaner field extraction.
+- **`set -euo pipefail`** ensures the script exits immediately on any error rather than silently continuing with empty credentials.
+- **`SESSION_NAME` includes a timestamp** so concurrent invocations don't collide and CloudTrail logs are distinguishable.
+- **All variables quoted** to handle edge cases and satisfy shellcheck.
+- **`sslmode=require`** on the `psql` connection string — IAM auth requires SSL; making it explicit prevents confusing error messages if the default differs.
+
+## In Application Code
+
+For applications using `psycopg2` (Python), generate the token at connection time and treat it as the password:
+
+```python
+import boto3
+import psycopg2
+
+session = boto3.session.Session()
+rds_client = session.client('rds', region_name='us-east-1')
+
+token = rds_client.generate_db_auth_token(
+    DBHostname='your-instance.xxxxxx.us-east-1.rds.amazonaws.com',
+    Port=5432,
+    DBUsername='app_user',
+    Region='us-east-1',
+)
+
+conn = psycopg2.connect(
+    host='your-instance.xxxxxx.us-east-1.rds.amazonaws.com',
+    port=5432,
+    database='your_database',
+    user='app_user',
+    password=token,
+    sslmode='require',
+)
+```
+
+Because tokens expire in 15 minutes, generate a fresh one at the start of each connection rather than caching it. Connection poolers that hold connections open for longer will need to handle re-authentication on reconnect.
+
+## What This Doesn't Replace
+
+IAM auth handles *authentication* — verifying who you are. Database *authorization* — which tables and schemas a user can access — still lives in PostgreSQL via `GRANT`. The two complement each other: IAM controls who can open a connection, PostgreSQL controls what they can do once inside.

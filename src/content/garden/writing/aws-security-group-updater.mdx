@@ -1,0 +1,91 @@
+---
+title: "AWS Security Group Updater"
+date: 2026-03-16
+description: "Lambda function that keeps an AWS security group in sync with a dynamic IP — handy for allowlisting a cloud Pi-hole or any home-hosted service."
+pageType: writeup
+tags: ["cloud", "security", "tools"]
+---
+
+If you're running something cloud-side that needs to accept traffic from a dynamic IP — a Pi-hole, a personal proxy, a PoC environment — constantly updating the security group by hand gets old fast. This Lambda resolves a hostname you control (a dynamic DNS entry works perfectly) and swaps the old CIDR for the current one across all ingress rules, then timestamps the description so you can see when it last ran.
+
+Trigger it on a schedule with EventBridge and you never have to touch the security group manually again.
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `SECURITY_GROUP_NAME` | Name of the EC2 security group to update. |
+| `HOSTNAME` | Hostname to resolve — a dynamic DNS domain pointing at your current IP. |
+
+## The Function
+
+```python
+import boto3
+import datetime
+import os
+import socket
+
+SECURITY_GROUP_NAME = os.environ['SECURITY_GROUP_NAME']
+HOSTNAME            = os.environ['HOSTNAME']
+
+
+def resolve_ipv4(hostname: str) -> str:
+    results = socket.getaddrinfo(hostname, None, socket.AF_INET)
+    if not results:
+        raise RuntimeError(f"No IPv4 address found for {hostname!r}")
+    # getaddrinfo returns (family, type, proto, canonname, sockaddr)
+    # sockaddr for AF_INET is (address, port)
+    return results[0][4][0]
+
+
+def update_security_group(new_ip: str) -> None:
+    client = boto3.client('ec2')
+    sg = client.describe_security_groups(
+        Filters=[{'Name': 'group-name', 'Values': [SECURITY_GROUP_NAME]}]
+    )['SecurityGroups'][0]
+
+    timestamp = str(datetime.datetime.utcnow())
+
+    for old_permission in sg['IpPermissions']:
+        new_permission = {
+            **old_permission,
+            'IpRanges': [
+                {**r, 'CidrIp': f'{new_ip}/32', 'Description': timestamp}
+                for r in old_permission['IpRanges']
+            ],
+        }
+        client.revoke_security_group_ingress(
+            GroupId=sg['GroupId'], IpPermissions=[old_permission]
+        )
+        client.authorize_security_group_ingress(
+            GroupId=sg['GroupId'], IpPermissions=[new_permission]
+        )
+
+
+def lambda_handler(event, context):
+    update_security_group(resolve_ipv4(HOSTNAME))
+    return {'statusCode': 200, 'body': 'Done'}
+```
+
+## Notes
+
+- **`socket.AF_INET`** constrains resolution to IPv4 so the `/32` prefix is always valid. Without it, `getaddrinfo` can return IPv6 addresses, which would need `/128` and would silently create a malformed rule.
+- The function rebuilds each rule's `IpRanges` with a dict spread instead of `copy.deepcopy`, keeping it readable and avoiding a full deep copy of nested structures you're about to overwrite anyway.
+- The revoke→authorize pattern is required because EC2 won't let you modify an existing ingress rule in place — you have to remove the old one and add the new one atomically per-permission.
+- If your security group has multiple ingress rules (e.g. port 80 and port 443 both open to your IP), all of them get updated in one run.
+
+## IAM Permissions Needed
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "ec2:DescribeSecurityGroups",
+    "ec2:RevokeSecurityGroupIngress",
+    "ec2:AuthorizeSecurityGroupIngress"
+  ],
+  "Resource": "*"
+}
+```
+
+Scope the `Resource` to the specific security group ARN in production.
