@@ -1,24 +1,24 @@
 ---
 /**
- * src/pages/writing/[slug].astro
+ * src/pages/post/[slug].astro
  *
- * Dynamic route for write-up pages (pageType === "writeup").
- * Renders each entry with WriteupLayout.
+ * Dynamic route for post pages (pageType === "post").
+ * Renders each entry with PostLayout.
  *
  * Implements T023.
  */
 
 import { getCollection, render } from "astro:content";
-import WriteupLayout from "@layouts/WriteupLayout.astro";
+import PostLayout from "@layouts/PostLayout.astro";
 
 export async function getStaticPaths() {
     const entries = await getCollection(
         "garden",
-        ({ data }) => !data.draft && data.pageType === "writeup",
+        ({ data }) => !data.draft && data.pageType === "post",
     );
 
     return entries.map((entry) => {
-        // entry.id in Astro 6 Content Layer is like "writing/cve-2024-example" (no extension)
+        // entry.id in Astro 6 Content Layer is like "post/cve-2024-example" (no extension)
         const parts = entry.id.split("/");
         const slug = parts[parts.length - 1];
         return {
@@ -33,7 +33,7 @@ const { Content } = await render(entry);
 
 const siteUrl = "https://alfredgamulo.com";
 const canonical =
-    entry.data.canonical ?? `${siteUrl}/writing/${Astro.params.slug}.html`;
+    entry.data.canonical ?? `${siteUrl}/post/${Astro.params.slug}.html`;
 
 // Build disclosure timeline from frontmatter dates if available
 const timelineEntries: { date: string; event: string }[] = [];
@@ -65,7 +65,7 @@ if (entry.data.disclosureDate) {
 }
 ---
 
-<WriteupLayout
+<PostLayout
     title={entry.data.title}
     description={entry.data.description}
     canonical={canonical}
@@ -82,4 +82,4 @@ if (entry.data.disclosureDate) {
     tags={entry.data.tags}
 >
     <Content />
-</WriteupLayout>
+</PostLayout>

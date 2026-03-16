@@ -11,7 +11,7 @@ import { z } from "astro/zod";
 
 // ─── Shared ───────────────────────────────────────────────────────────────────
 
-const PageTypeEnum = z.enum(["writeup", "interactive", "note"]);
+const PageTypeEnum = z.enum(["post", "interactive"]);
 
 const CvssSeverityEnum = z.enum(["CRITICAL", "HIGH", "MEDIUM", "LOW", "NONE"]);
 
@@ -29,9 +29,8 @@ const basePageSchema = z.object({
 
   /**
    * Page presentation type.
-   * - "writeup"     → WriteupLayout (CVE reports, essays)
+   * - "post"        → PostLayout (CVE reports, essays, notes)
    * - "interactive" → InteractiveLayout (code editors, canvases)
-   * - "note"        → NoteLayout (short-form, links, quick thoughts)
    */
   pageType: PageTypeEnum,
 

@@ -20,7 +20,7 @@ export interface MindMapNode {
   description: string;
   tags: string[];
   primaryTag: string;
-  pageType: "writeup" | "interactive" | "note" | "tag";
+  pageType: "post" | "interactive" | "tag";
 }
 
 export interface MindMapLink {
@@ -59,12 +59,10 @@ function getEntryUrl(entry: CollectionEntry<"garden">): string {
   // Extract the leaf segment as the URL slug.
   const parts = entry.id.split("/");
   const leafSlug = parts[parts.length - 1];
-  if (pageType === "writeup") {
-    return `/writing/${leafSlug}.html`;
-  } else if (pageType === "interactive") {
-    return `/playground/${leafSlug}.html`;
+  if (pageType === "post") {
+    return `/post/${leafSlug}.html`;
   } else {
-    return `/notes/${leafSlug}.html`;
+    return `/playground/${leafSlug}.html`;
   }
 }
 
