@@ -54,14 +54,72 @@ tm.process()
 From this, pytm can generate a Graphviz data flow diagram that visually represents your system, along with a report listing every threat it identifies from its built-in threat library. The report maps those threats to STRIDE categories and suggests mitigations. You can filter, extend, or override the built-in threats to match your organization's risk profile.
 
 ```bash
-# generate the DFD as a dot file, render to PDF
-python threatmodel.py --dfd | dot -Tpdf -o dfd.pdf
+# generate the DFD as a dot file, render to SVG
+python threatmodel.py --dfd | dot -Tsvg -o dfd.svg
 
 # generate the threat report
-python threatmodel.py --report docs/security/threat-report.md
+python threatmodel.py --report report_template.md | pandoc -f markdown -t html -o threatmodel.html
 ```
 
+The `--report` flag takes a Markdown template. A minimal `report_template.md` looks like this:
+
+````markdown
+# {tm.name}
+
+## System Description
+
+{tm.description}
+
+---
+
+## Architecture Diagram
+
+![Data Flow Diagram](dfd.svg)
+
+---
+
+## Data Flows
+
+| Source | Destination | Description | Protocol | Port |
+|--------|-------------|-------------|----------|------|
+{dataflows:repeat:|{{item.source.name}}|{{item.sink.name}}|{{item.name}}|{{item.protocol}}|{{item.dstPort}}|
+}
+
+---
+
+## Potential Threats
+
+{findings:repeat:
+### {{item.threat_id}} - {{item.description}}
+
+**Target:** {{item.target}}
+
+**Severity:** {{item.severity}}
+
+**Mitigations:**
+
+{{item.mitigations}}
+
+**References:**
+
+{{item.references}}
+
+---
+
+}
+````
+
 Both outputs can be committed alongside your code. The diagram lives in your documentation. The report becomes a living artifact that reflects the real system.
+
+The generated files should be committed to your repository:
+
+<iframe
+  src="/threatmodel.html"
+  title="Generated pytm threat model report"
+  width="100%"
+  height="520"
+  style="border: 1px solid #30363d; border-radius: 6px; display: block; margin: 1rem 0;"
+/>
 
 ## Where It Fits in a Pipeline
 
