@@ -1,0 +1,117 @@
+---
+title: "Threat Modeling That Keeps Up With Your Code"
+date: 2026-03-18
+description: "pytm brings threat modeling into the development lifecycle as code, so your security analysis stays current instead of gathering dust after the initial review."
+pageType: post
+tags: ["security", "python"]
+draft: false
+---
+
+Most security practices have a gap between what teams say they do and what they actually do. Threat modeling is one of the worst offenders. It sounds great on paper: sit down before you build something, think through what could go wrong, document it. In reality, it usually means someone fills out a long questionnaire, a security team reviews it once, and then the application ships and evolves for the next two years without another look. That initial review becomes a historical artifact. It stops describing the system you have and starts describing the system you once planned to build.
+
+pytm is an attempt to fix that. It is an OWASP project that lets you define your system's components, data flows, and trust boundaries in Python, and then generate both a data flow diagram and a threat report from that definition. Because it's code, it can live in your repository, change when your architecture changes, and run in a pipeline that tells you when something meaningful has shifted.
+
+## What Threat Modeling Actually Is
+
+At its core, threat modeling is a structured way of asking: what are we building, what could go wrong, and what should we do about it? The answer to the first question shapes everything else. You need to understand your system's components, how they communicate, which trust boundaries they cross, and what data they handle before you can reason about the threats that apply.
+
+The most widely used framework for categorizing threats is STRIDE, developed at Microsoft. It covers six categories: **Spoofing**, **Tampering**, **Repudiation**, **Information Disclosure**, **Denial of Service**, and **Elevation of Privilege**. You walk through each component and each data flow in your system and ask which STRIDE categories apply. The result is a prioritized set of threats you can address with mitigations.
+
+This is genuinely useful work. Identifying that an unauthenticated endpoint exposes sensitive data, or that a message queue has no integrity checks, before a penetration tester finds it in production is exactly the kind of left-shift security benefit people mean when they talk about shifting security left. The problem is not the methodology. The problem is how organizations treat it as a one-time event.
+
+## The Problem With One-Time Reviews
+
+A threat model is a snapshot. The moment your system changes, that snapshot starts aging. And systems change constantly: new endpoints, new integrations, new data stores, changed authentication flows, third-party services added or removed. Any of these can introduce new attack surface or render existing mitigations inadequate.
+
+The questionnaire-driven approach makes this worse. Questionnaires are tedious, so teams rush through them. They're often reviewed by security teams who weren't part of the design conversation, so context is lost in translation. And because the artifact is a PDF or a spreadsheet rather than something connected to the code, there's no automated mechanism to surface when it's become stale.
+
+The result is that threat models for mature systems often describe an architecture that no longer exists. The trust boundaries have shifted, new services have been added, and the original assumptions are gone. But the document still has an approval stamp on it, so everyone moves on.
+
+## Threat Modeling as Code With pytm
+
+pytm takes a different approach. Instead of filling out a form, you describe your system in Python. Your components, data flows, processes, data stores, and trust boundaries are objects. Your architecture is a program. And that program can do things a spreadsheet cannot.
+
+A basic pytm definition looks like this:
+
+```python
+from pytm import TM, Server, Process, Dataflow, Boundary, Actor, Datastore
+
+tm = TM(name="Order Service")
+
+internet = Boundary(name="Internet")
+backend = Boundary(name="Backend")
+
+user = Actor(name="User", inBoundary=internet)
+web = Process(name="Web API", inBoundary=backend)
+db = Datastore(name="Orders DB", inBoundary=backend)
+
+Dataflow(user, web, name="Submit Order", protocol="HTTPS")
+Dataflow(web, db, name="Write Order", protocol="TLS")
+
+tm.process()
+```
+
+From this, pytm can generate a Graphviz data flow diagram that visually represents your system, along with a report listing every threat it identifies from its built-in threat library. The report maps those threats to STRIDE categories and suggests mitigations. You can filter, extend, or override the built-in threats to match your organization's risk profile.
+
+```bash
+# generate the DFD as a dot file, render to PDF
+python threatmodel.py --dfd | dot -Tpdf -o dfd.pdf
+
+# generate the threat report
+python threatmodel.py --report docs/security/threat-report.md
+```
+
+Both outputs can be committed alongside your code. The diagram lives in your documentation. The report becomes a living artifact that reflects the real system.
+
+## Where It Fits in a Pipeline
+
+This is where pytm goes from interesting to genuinely valuable for teams that take DevSecOps seriously. Because the threat model is code, it belongs in your CI/CD pipeline. A few things you can do with that:
+
+**Fail the build on new unchecked threats.** pytm supports tracking threat status. If a data flow is added without its associated threats being reviewed and either accepted or mitigated, the pipeline can flag it. This creates a forcing function: adding new attack surface without security review is not silently allowed.
+
+**Regenerate documentation on every merge.** Your threat report and DFD can be regenerated automatically whenever the model changes. Security documentation stays current without anyone having to remember to update it.
+
+**Trigger a re-review on substantial changes.** By diffing the threat report output between commits, you can identify when the threat count has jumped significantly or when a new trust boundary has appeared. That delta is a signal for security to take a closer look rather than waiting for the next annual review cycle.
+
+**Archive model history.** Because the threat model is versioned in git alongside the rest of your code, you can trace how the attack surface of your system has evolved over time. This is useful for compliance, incident response, and understanding the security implications of architectural decisions that were made months or years ago.
+
+## Fitting This Into a Real Workflow
+
+Getting pytm into a mature DevSecOps workflow does not have to be a big-bang migration. The practical path is incremental.
+
+Start by modeling your most critical service. Define its components, data flows, and boundaries. Run the threat generation and go through the output with your engineering and security teams. This is the first real threat model many teams have done in years, and the exercise of building it in code forces better conversations than filling out a form. You have to make your architecture explicit to a computer, and that surfaces ambiguities.
+
+From there, add pytm to your CI pipeline. At minimum, make the diagram and report generate on every merge so they stay current in your documentation. Once that is working, layer in the checks that gate on unreviewed threats.
+
+The install is straightforward:
+
+```bash
+pip install pytm
+```
+
+You will also need Graphviz for diagram generation:
+
+```bash
+# macOS
+brew install graphviz
+
+# Debian / Ubuntu
+apt install graphviz
+```
+
+pytm supports output to multiple report formats and integrates with templating engines for custom report layouts. The built-in threat library covers STRIDE across common component types, and you can add organization-specific threats as Python objects.
+
+## The Bigger Picture
+
+The shift that pytm enables is treating security analysis as a first-class artifact of software development rather than a compliance checkbox. When a threat model lives in a spreadsheet, it competes with all the other spreadsheets nobody reads. When it lives in the repository, is generated by the build, and gates merges that introduce unreviewed attack surface, it is participating in the development process.
+
+Continuous threat modeling is not about eliminating security reviews. It is about making sure those reviews happen at the right times, informed by what the system actually looks like today, not what it looked like when the project kicked off. pytm makes that tractable.
+
+## References
+
+- [OWASP pytm GitHub Repository](https://github.com/OWASP/pytm) — source, issue tracker, and examples
+- [pytm Documentation](https://owasp.org/www-project-pytm/) — OWASP project page
+- [STRIDE Threat Model](https://learn.microsoft.com/en-us/azure/security/develop/threat-modeling-tool-threats) — Microsoft's breakdown of the STRIDE categories
+- [OWASP Threat Modeling Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Threat_Modeling_Cheat_Sheet.html) — practical guide to the threat modeling process
+- [Threat Modeling: Designing for Security](https://shostack.org/books/threat-modeling-book) by Adam Shostack — the definitive reference on threat modeling methodology
+- [Graphviz](https://graphviz.org/) — the underlying graph rendering tool pytm uses for DFD generation
