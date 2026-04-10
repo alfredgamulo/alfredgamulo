@@ -1,0 +1,249 @@
+---
+title: "From GitHub to Google Play: The Android Release Gauntlet"
+date: 2026-04-09
+description: "The technical and bureaucratic journey to ship an Android app on Google Play — including the gotchas that trip up most first-time developers."
+pageType: post
+tags: ["mobile", "code", "deployment"]
+draft: false
+---
+
+There's a significant gap between having a working Android app and having one that can generate revenue on Google Play. The technical part — building and signing an app — is straightforward. The process of actually getting it into production, however, is a minefield of quirks, restrictions, and requirements that aren't immediately obvious from the documentation.
+
+I'm going to walk through the full workflow from GitHub initialization to your first sale, with an emphasis on the things that commonly derail developers the first time.
+
+## 1. Repository & Environment Setup: The `.gitignore` Gotcha
+
+You'll want to initialize a new repository on GitHub. But Android projects have a critical security consideration that trips up many developers: your signing keystore (the `.jks` file) and release signing credentials must never, ever be committed to the repository.
+
+Create a `.gitignore` specifically tailored for Android:
+
+```
+# Build outputs
+build/
+.gradle/
+*.apk
+*.aab
+
+# Signing credentials
+*.jks
+*.keystore
+local.properties
+gradle.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+```
+
+The most dangerous mistake here is committing your `.jks` file. If someone gets access to your release keystore, they can sign and publish malicious updates to your app — and users will install them because they appear to come from you.
+
+### Version Control Strategy
+
+Establish two main branches: `main` for production-ready code and a working branch (typically `develop` or feature branches) for active development. This enforces a gate — your production releases don't go out without explicit review.
+
+### Automate Early With CI/CD
+
+Set up a GitHub Actions workflow (`.github/workflows/main.yml`) that runs on every commit:
+- Lint checks and static analysis
+- Unit tests
+- Build the App Bundle (AAB) — more on this below
+
+Having automated builds catch errors before they reach your signing process saves tremendous time.
+
+## 2. Signing & Secrets: The Modern AAB Standard
+
+Google Play has officially moved from `.apk` (Android Package) to `.aab` (Android App Bundle). This is important: if you're only building APKs, you can still submit, but AAB is now the default and necessary for reaching optimal app sizes on user devices. Most tooling and examples have migrated accordingly.
+
+### Generate the Upload Key
+
+You'll create a signing key using `keytool`:
+
+```bash
+keytool -genkey -v -keystore my-release-key.jks \
+  -keyalg RSA -keysize 2048 -validity 10000 -alias my-alias
+```
+
+This prompts you for your name, organization, and a password. Choose a strong password — this is the key to your app's future.
+
+**Gotcha #1:** The `-validity 10000` sets the certificate to expire in ~27 years. If your key expires before your app updates expire, Google Play will reject your upload. So pick a huge number here.
+
+**Gotcha #2:** Don't lose this file or the password. There is no way to recover a lost upload key. If you lose it, you cannot update your app — you'll have to unpublish, create a new app entry, and rebuild your user base from zero. Store it somewhere with backups.
+
+### Secure the Credentials in GitHub Actions
+
+In your GitHub repository, navigate to Settings → Secrets and Variables → Actions and add:
+
+- `KEYSTORE_FILE` (base64-encoded `.jks` file)
+- `KEYSTORE_PASSWORD`
+- `KEY_ALIAS`
+- `KEY_PASSWORD`
+
+To base64-encode your keystore:
+
+```bash
+base64 -w 0 my-release-key.jks > keystore.b64
+```
+
+Then paste the contents into `KEYSTORE_FILE`.
+
+### Configure Gradle for Signing
+
+In your `build.gradle.kts` (or `build.gradle` for Groovy), add a `signingConfigs` block that reads these environment variables:
+
+```kotlin
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file(System.getenv("KEYSTORE_PATH") ?: "keystore.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("KEY_ALIAS")
+            keyPassword = System.getenv("KEY_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+```
+
+Your GitHub Actions workflow then decodes the keystore and sets the path before running the build:
+
+```yaml
+- name: Decode Keystore
+  run: |
+    echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > keystore.jks
+    echo "KEYSTORE_PATH=$PWD/keystore.jks" >> $GITHUB_ENV
+```
+
+## 3. Google Play Console: The Developer Account & Store Listing
+
+Create a Google Play Developer account, which requires a one-time $25 fee and a Google account. There's no recurring cost beyond this.
+
+### Create Your App Entry
+
+In the Play Console:
+1. Click "Create App"
+2. Name your app
+3. Select your app type (App vs. Game) and category
+4. Declare if it contains ads, supports family policy, etc.
+
+Simple so far. The friction comes next.
+
+### The Store Listing Assets
+
+You need to provide several images and descriptions:
+
+- **App Icon** (512×512 px, PNG): This is your app's avatar everywhere
+- **Feature Graphic** (1024×500 px): The banner at the top of your store listing
+- **Screenshots** (at least 2, ideally 4-5): Phone (1080×1920) or tablet (2560×1600). These are critical — they're often the deciding factor for whether someone installs
+- **App Description** (4000 characters max): Sell your app
+- **Short Description** (80 characters): The headline people see first
+
+**Gotcha #3:** Your store listing isn't published immediately. Google Play requires you to go through testing tracks first. You cannot see what your production release will look like to users until you've at least submitted to internal testing.
+
+## 4. Testing Tracks: The 14-Day Closed Testing Wall
+
+This is where most first-time developers get stuck, and it's poorly documented.
+
+### Internal Testing
+
+Upload your first AAB to the "Internal Testing" track. This lets you (and up to 100 people you invite) install the app immediately from Play Console.
+
+This is fast — it takes minutes. Use this to verify your app actually runs on real hardware.
+
+### Closed Testing: The "20 Tester" Rule
+
+To move from internal testing to closed testing, you need a **minimum of 20 testers who remain opted-in for 14 consecutive days**. This is the single biggest gotcha for individual developers.
+
+**Why this rule exists:** Google Play uses this to collect stability data and crash reports. They won't let you move forward without evidence that real people have run your app for two weeks without catastrophic failures.
+
+**How to meet it:**
+
+1. Recruit 25+ people (assume some will drop out)
+2. Send them an email with the internal testing link
+3. Ask them to install it and use it for at least 2 weeks
+4. Don't submit to closed testing until the 14 days are up
+
+You cannot rush this. Many developers try to submit to closed testing with fewer testers or in less than 14 days and get rejected by automated checks.
+
+**Gotcha #4:** "Opted-in" means they've clicked the link and installed from Play Console at least once. Inactive testers who never engaged don't count. The timer extends if they uninstall and reinstall.
+
+During this phase, monitor the Play Console's **Vitals** dashboard, which shows crashes, ANRs (Application Not Responding), and other errors. Fix any critical issues before moving to production — a high crash rate here will severely damage your app's ranking once it's public.
+
+## 5. Production Submission: Data Safety and The Manual Review
+
+Once your closed testing window has elapsed and your crash-free user percentage is acceptable (Google doesn't publish the exact threshold, but assume they want < 1% crashes), you create a new release in the **Production** track.
+
+### The Data Safety Form
+
+Before you can submit, you must complete the **"Data Safety"** section. This is mandatory and is the most common reason for rejection on first submission.
+
+You declare:
+
+- What personal data your app collects (location, contacts, financial info, health data, etc.)
+- How you use it (analytics, advertising, account management)
+- Whether data is encrypted
+- Whether third parties can access it
+- Your privacy policy link
+
+**Gotcha #5:** Omissions here are the most common rejection reason. If your app uses Google Analytics and you don't declare it, submission will be rejected. If you use AdMob but say you don't collect advertising ID data, same thing. Be exhaustive and honest.
+
+### Advertising & Targeting Disclosures
+
+If your app shows ads or uses an ad network SDK, you must declare it. You also need to target specific countries — you can't leave this blank.
+
+### Upload and Submit
+
+Upload the signed AAB and submit for review. A Google reviewer will manually examine your app and perform automated security checks. The process typically takes 3–7 days for first-time apps (subsequent reviews often move faster).
+
+**Gotcha #6:** During review, your app status shows "In Review." If Google finds issues, they'll email you with specific rejection reasons. This is not a one-shot process — you fix the issues and resubmit. The review window starts over each time.
+
+**Gotcha #7:** Your app goes live the moment the status changes from "In Review" to "Available on Google Play." You don't need to do anything else. An email will notify you, but some developers think they need to take an additional action and end up missing this.
+
+## 6. Monetization: The Merchant Account Setup
+
+To accept payments and earn revenue, you must link a Google Payments merchant account.
+
+### Connect Your Merchant Account
+
+In Play Console, go to **Setup** → **Payments Profile** and add your merchant account. You'll need:
+- Your name and address
+- A tax identification number (EIN in the US, or equivalent)
+- Banking details for payouts
+
+### Set Pricing
+
+If you're charging for your app or offering in-app purchases, set the base price in your home currency. Google Play automatically converts this to local currencies and handles tax collection for most regions (VAT in Europe, GST in India, etc.).
+
+**Gotcha #8:** Don't assume your listed price is what the user pays. In regions with VAT, Google adds tax on top. A $5 app might cost €5.99 or £5.49 after local tax is factored in. Users see the final price, but your revenue reports will show the pre-tax amount.
+
+### Monitor Financial Reports
+
+Once your app is live, track the **Financial Reports** section to see transaction counts, revenue, payouts, and refund rates.
+
+**Gotcha #9:** Payouts don't happen immediately. Merchants in the US can typically withdraw starting 21 days after their first sale. Other regions may have longer delays.
+
+## The Complete Workflow: Start to First Sale
+
+To recap the non-obvious sequencing:
+
+1. **Set up GitHub** with proper `.gitignore` and CI/CD
+2. **Create and store your signing key** securely in GitHub Actions Secrets
+3. **Create your Google Play Developer account** (fee required)
+4. **Build and sign your AAB**
+5. **Upload to internal testing** — verify functionality
+6. **Recruit 25+ testers and upload to closed testing**
+7. **Wait 14 days** for the testing window to elapse
+8. **Complete the Data Safety form** thoroughly
+9. **Submit to production** for review (3–7 day wait)
+10. **App goes live** — review status changes to "Available"
+11. **Set up merchant account** and enable monetization
+12. **Track first sale** in Financial Reports
+
+The technical portions are straightforward. The procedural portions — especially the 14-day testing gate and the data safety form — require patience and attention to detail. Most first-time developers underestimate how many rejections they'll face at the Data Safety stage and how long the testing window actually takes.
+
+Plan for the full workflow to take 4–5 weeks from GitHub initialization to first sale. The first release is the longest; subsequent updates move faster because you skip the closed testing phase.
