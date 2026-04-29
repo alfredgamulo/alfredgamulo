@@ -11,6 +11,11 @@ My journey has taken me through some incredible security challenges. Here is a s
 * **System Engineering:** I enjoy building and maintaining my own computing environment, [QuantumQat](https://github.com/alfredgamulo/quantumqat), which is my custom-tailored, immutable operating system.
 * **SaaS Delivery:** I overcome the challenge of account provisioning and product delivery pipelines, especially when they empower users to understand their own compliance.
 
+### 📶 Products & Innovation
+Doing business as **Powered Sciences**, I develop tools that make cutting-edge technology accessible:
+
+* **[SDR Pro](https://poweredsciences.com/sdrpro.html)** - An Android app for Software-Defined Radio that makes this fascinating technology accessible to beginners while delivering the power advanced users demand. [Available on Google Play](https://play.google.com/store/apps/details?id=com.poweredsciences.lucio)
+
 ### 🚩 The "Hacker" Side
 When I am not at my desk, I am usually deep in the security community. I believe in continuous learning and giving back to the scene:
 
