@@ -15,6 +15,7 @@ My journey has taken me through some incredible security challenges. Here is a s
 Doing business as **Powered Sciences**, I develop tools that make cutting-edge technology accessible:
 
 * **[SDR Pro](https://poweredsciences.com/sdrpro.html)** - An Android app for Software-Defined Radio that makes this fascinating technology accessible to beginners while delivering the power advanced users demand. [Available on Google Play](https://play.google.com/store/apps/details?id=com.poweredsciences.lucio)
+* **[WiFi Pro](https://poweredsciences.com/wifipro.html)** - WiFi Pro: SIGINT Explorer turns your Android phone into a portable 802.11 analysis platform. Plug in a supported USB Wi-Fi adapter to capture and analyze wireless traffic with features like live frame inspection, GPS wardriving, WPA2 handshake capture, and on-device cracking. [Available on Google Play](https://play.google.com/store/apps/details?id=com.poweredsciences.sombra)
 
 ### 🚩 The "Hacker" Side
 When I am not at my desk, I am usually deep in the security community. I believe in continuous learning and giving back to the scene:
