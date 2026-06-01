@@ -1,3 +1,11 @@
+# Rewrites /foo → /foo.html so CloudFront+S3 OAC can serve Astro's file-format output
+resource "aws_cloudfront_function" "rewrite_html" {
+  name    = "${replace(var.domain_name, ".", "-")}-rewrite-html"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code    = file("${path.module}/functions/url-rewrite.js")
+}
+
 # Origin Access Control — SigV4 signing so CloudFront can read private S3
 resource "aws_cloudfront_origin_access_control" "site" {
   name                              = "${var.domain_name}-oac"
@@ -33,6 +41,11 @@ resource "aws_cloudfront_distribution" "site" {
 
     # AWS-managed CachingOptimized policy (ID is a well-known constant)
     cache_policy_id = "658327ea-f89d-4fab-a63d-7e88639e58f6"
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.rewrite_html.arn
+    }
   }
 
   # Astro outputs /404.html — map both 403 (S3 access denied) and 404 to it
