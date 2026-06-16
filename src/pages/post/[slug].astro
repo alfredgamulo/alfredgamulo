@@ -33,7 +33,7 @@ const { Content } = await render(entry);
 
 const siteUrl = "https://alfredgamulo.com";
 const canonical =
-    entry.data.canonical ?? `${siteUrl}/post/${Astro.params.slug}.html`;
+    entry.data.canonical ?? `${siteUrl}/post/${Astro.params.slug}`;
 
 // Build disclosure timeline from frontmatter dates if available
 const timelineEntries: { date: string; event: string }[] = [];

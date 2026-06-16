@@ -59,11 +59,8 @@ function getEntryUrl(entry: CollectionEntry<"garden">): string {
   // Extract the leaf segment as the URL slug.
   const parts = entry.id.split("/");
   const leafSlug = parts[parts.length - 1];
-  if (pageType === "post") {
-    return `/post/${leafSlug}.html`;
-  } else {
-    return `/playground/${leafSlug}.html`;
-  }
+  const prefix = pageType === "post" ? "post" : "playground";
+  return `/${prefix}/${leafSlug}`;
 }
 
 // ─── Main Builder ─────────────────────────────────────────────────────────────
